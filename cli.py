@@ -23,7 +23,7 @@ def list_files(path: str = ".") -> str:
 
 def stream_response(llm_with_tools, messages):
     """Stream one response turn, return the accumulated AIMessage."""
-    print("AI> ", end="", flush=True)
+    print("Zeppeli> ", end="", flush=True)
     chunks = []
     for chunk in llm_with_tools.stream(messages):
         if chunk.content:

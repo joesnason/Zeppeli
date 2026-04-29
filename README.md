@@ -1,4 +1,4 @@
-# Ollama CLI Chat
+# Zeppeli
 
 Interactive terminal chat interface powered by a local [Ollama](https://ollama.com) model with tool-calling support.
 
@@ -36,7 +36,7 @@ Ollama Chat (gemma4:26b-nvfp4)  — type 'quit' or Ctrl+C to exit
 
 You> 現在目錄下有哪些檔案？
   [tool: list_files({'path': '.'})]
-AI> 目前目錄下有以下檔案：...
+Zeppeli> 目前目錄下有以下檔案：...
 
 You> /exit
 Bye!
