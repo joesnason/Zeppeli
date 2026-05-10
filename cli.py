@@ -2,6 +2,12 @@ import json
 import pathlib
 import readline  # noqa: F401 — enables arrow keys and input history
 import subprocess
+import sys
+from rich.console import Console
+from rich.live import Live
+from rich.markdown import Markdown as RichMarkdown
+from rich.markup import escape
+from rich.rule import Rule
 from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -105,58 +111,66 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
         return f"[read_file] Error: {e}"
 
 
-def stream_response(llm_with_tools, messages):
-    """Stream one response turn, return the accumulated AIMessage."""
-    print("Zeppeli> ", end="", flush=True)
+def stream_response(llm_with_tools, messages, console):
     chunks = []
-    for chunk in llm_with_tools.stream(messages):
-        if chunk.content:
-            print(chunk.content, end="", flush=True)
-        chunks.append(chunk)
-    print()
+    accumulated = ""
+    with Live(RichMarkdown(""), console=console, refresh_per_second=15) as live:
+        for chunk in llm_with_tools.stream(messages):
+            if chunk.content:
+                accumulated += chunk.content
+                live.update(RichMarkdown(accumulated))
+            chunks.append(chunk)
+    if not chunks:
+        return None
     response = chunks[0]
     for c in chunks[1:]:
         response = response + c
     return response
 
 
-def run_turn(llm_with_tools, messages, user_input):
+def run_turn(llm_with_tools, messages, user_input, console):
     messages.append(HumanMessage(content=user_input))
-    response = stream_response(llm_with_tools, messages)
+    response = stream_response(llm_with_tools, messages, console)
     messages.append(response)
 
     tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file]}
     while response.tool_calls:
         for tc in response.tool_calls:
-            print(f"  [tool: {tc['name']}({tc['args']})]")
+            info = escape(f"[tool: {tc['name']}({tc['args']})]")
+            console.print(f"[dim]  {info}[/dim]")
             result = tools[tc["name"]].invoke(tc["args"])
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
-        response = stream_response(llm_with_tools, messages)
+        response = stream_response(llm_with_tools, messages, console)
         messages.append(response)
 
 
 def main():
+    console = Console()
     llm = ChatOllama(model=MODEL)
     llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file])
     messages = [SystemMessage(content=SYSTEM_PROMPT)]
 
-    print(f"Ollama Chat ({MODEL})  — type 'quit' or Ctrl+C to exit\n")
-
     while True:
+        console.print(Rule())
         try:
-            user_input = input("You> ").strip()
+            user_input = input("> ").strip()
         except (KeyboardInterrupt, EOFError):
-            print("\nBye!")
+            console.print("\nBye!")
             break
 
         if not user_input:
             continue
         if user_input.lower() in ("quit", "exit", "/exit"):
-            print("Bye!")
+            console.print("Bye!")
             break
 
-        run_turn(llm_with_tools, messages, user_input)
-        print()
+        # Replace the typed line with the orange version
+        sys.stdout.write("\x1b[A\x1b[2K")
+        sys.stdout.flush()
+        console.print(f"[bold orange1]> {escape(user_input)}[/bold orange1]")
+        console.print(Rule())
+
+        run_turn(llm_with_tools, messages, user_input, console)
 
 
 if __name__ == "__main__":
