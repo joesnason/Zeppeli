@@ -33,6 +33,7 @@ python3 cli.py
 | `list_files(path)` | `subprocess` → `ls -la` | |
 | `glob_files(pattern, cwd)` | `subprocess` → `node -e` using `node:fs/promises` `glob` | Requires Node.js 22+ |
 | `rg_search(pattern, path, glob)` | `subprocess` → `bin/rg` | Uses bundled binary; no system `rg` needed |
+| `read_file(path, offset, limit, max_lines, max_bytes)` | pure Python `open()` | 400 lines/call max; stops at 10 000 lines or 96 KB; returns next `offset` hint |
 
 ## Adding Tools
 
