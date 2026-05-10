@@ -145,6 +145,9 @@ if __name__ == "__main__":
         "Show me what's in the /tmp folder", # 應該用 tool
         "Find all Python files in the current directory", # 應該用 glob tool
         "Search for the word 'tool' in all Python files", # 應該用 rg tool
+        "Read the file README.md",                        # 應該用 read_file tool
+        "Show me the first 10 lines of cli.py",           # 應該用 read_file tool，limit=10
+        "Read lines 5 to 15 of cli.py",                  # 應該用 read_file tool，offset=5, limit=10
     ]
     for prompt in test_prompts:
         run_agent(prompt)

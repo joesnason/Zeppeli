@@ -47,6 +47,10 @@ You> 搜尋所有含有 @tool 的地方
   [tool: rg_search({'pattern': '@tool', 'glob': '*.py'})]
 Zeppeli> 在以下位置找到 @tool：...
 
+You> 讀取 cli.py 的前 20 行
+  [tool: read_file({'path': 'cli.py', 'limit': 20})]
+Zeppeli> 以下是 cli.py 的前 20 行：...
+
 You> /exit
 Bye!
 ```
@@ -58,6 +62,7 @@ Bye!
 | `list_files(path)` | List files and directories via `ls -la` |
 | `glob_files(pattern, cwd)` | Find files by glob pattern via Node.js `fs.glob`; supports `**` |
 | `rg_search(pattern, path, glob)` | Search file contents with ripgrep (regex supported); uses bundled `bin/rg` |
+| `read_file(path, offset, limit, max_lines, max_bytes)` | Read a file in chunks of up to 400 lines; use `offset` to paginate; stops at 10 000 lines or 96 KB |
 
 ## Files
 
