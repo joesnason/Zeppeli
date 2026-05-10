@@ -29,11 +29,15 @@ def _get_toolbar() -> str:
         text = ""
     width = shutil.get_terminal_size().columns
     rule = "─" * width
-    if text.startswith("/"):
-        matches = [c for c in SLASH_COMMANDS if c.startswith(text)]
-        if matches:
-            return rule + "\n" + "\n".join(matches)
-    return rule + "\n"
+
+    matches = (
+        [c for c in SLASH_COMMANDS if c.startswith(text)]
+        if text.startswith("/")
+        else []
+    )
+    # Pad to fixed height so toolbar never resizes (prevents blank-line artifact)
+    cmd_lines = matches + [""] * (len(SLASH_COMMANDS) - len(matches))
+    return "\n".join([rule] + cmd_lines)
 
 SYSTEM_PROMPT = """You are a helpful assistant with access to the following tools:
 
