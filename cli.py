@@ -1,8 +1,11 @@
 import json
 import pathlib
-import readline  # noqa: F401 — enables arrow keys and input history
+import shutil
 import subprocess
 import sys
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown as RichMarkdown
@@ -14,6 +17,23 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 MODEL = "gemma4:26b-nvfp4"
 RG_BIN = str(pathlib.Path(__file__).parent / "bin" / "rg")
+
+SLASH_COMMANDS = ["/exit", "/quit"]
+
+
+def _get_toolbar() -> str:
+    from prompt_toolkit.application import get_app
+    try:
+        text = get_app().current_buffer.text
+    except Exception:
+        text = ""
+    width = shutil.get_terminal_size().columns
+    rule = "─" * width
+    if text.startswith("/"):
+        matches = [c for c in SLASH_COMMANDS if c.startswith(text)]
+        if matches:
+            return rule + "\n" + "\n".join(matches)
+    return rule + "\n"
 
 SYSTEM_PROMPT = """You are a helpful assistant with access to the following tools:
 
@@ -150,17 +170,24 @@ def main():
     llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file])
     messages = [SystemMessage(content=SYSTEM_PROMPT)]
 
+    _toolbar_style = Style.from_dict({
+        "bottom-toolbar": "bg:default fg:default noreverse",
+    })
+    session = PromptSession(bottom_toolbar=_get_toolbar, style=_toolbar_style)
+
     while True:
         console.print(Rule())
         try:
-            user_input = input("> ").strip()
+            user_input = session.prompt(
+                FormattedText([("fg:#ff8700 bold", "> ")]),
+            ).strip()
         except (KeyboardInterrupt, EOFError):
             console.print("\nBye!")
             break
 
         if not user_input:
             continue
-        if user_input.lower() in ("quit", "exit", "/exit"):
+        if user_input.lower() in ("quit", "exit", "/exit", "/quit"):
             console.print("Bye!")
             break
 
