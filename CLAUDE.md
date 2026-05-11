@@ -31,14 +31,17 @@ python3 cli.py
 The CLI runs in normal terminal mode (no alternate screen), so the terminal's native scrollback works. Layout per turn:
 
 ```
-──────────────────────────────  ← Rule (Rich) before each prompt
-> user message                  ← orange, replaces the typed line in-place
-──────────────────────────────  ← Rule (bottom_toolbar line 1)
-                                ← bottom_toolbar lines 2–N: slash command hints
 [AI response rendered as Markdown, streamed live via rich.live.Live]
+                                ← blank line after AI response
+──────────────────────────────  ← Rule (Rich) above the input prompt
+> user message                  ← orange, replaces the typed line in-place
+──────────────────────────────  ← bottom_toolbar line 1: rule below input
+                                ← bottom_toolbar lines 2–N: slash command hints
 ```
 
 - Input is handled by `prompt_toolkit.PromptSession` with an orange `>` prompt (`fg:#ff8700 bold`)
+- The input area is framed by a Rule above (`console.print(Rule())`) and a rule below (first line of `_get_toolbar()`)
+- AI responses are separated from the next input frame by a blank line only — no Rule around responses
 - The bottom toolbar is **always a fixed height** (`1 + len(SLASH_COMMANDS)` lines) to prevent blank-line rendering artifacts; empty slots are padded with `""`
 - Typing `/` filters `SLASH_COMMANDS` and shows matching commands below the toolbar rule, one per line
 - User input is echoed in bold orange after Enter (typed line replaced via ANSI `\x1b[A\x1b[2K`)

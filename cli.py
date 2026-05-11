@@ -199,7 +199,7 @@ def main():
         sys.stdout.write("\x1b[A\x1b[2K")
         sys.stdout.flush()
         console.print(f"[bold orange1]> {escape(user_input)}[/bold orange1]")
-        console.print(Rule())
+        console.print()
 
         run_turn(llm_with_tools, messages, user_input, console)
 
