@@ -138,12 +138,22 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
 def stream_response(llm_with_tools, messages, console):
     chunks = []
     accumulated = ""
-    with Live(RichMarkdown(""), console=console, refresh_per_second=15) as live:
-        for chunk in llm_with_tools.stream(messages):
+    stream = llm_with_tools.stream(messages)
+
+    with console.status("[dim]Thinking...[/dim]", spinner="dots"):
+        for chunk in stream:
+            chunks.append(chunk)
+            if chunk.content:
+                accumulated = chunk.content
+                break
+
+    with Live(RichMarkdown(accumulated), console=console, refresh_per_second=15) as live:
+        for chunk in stream:
             if chunk.content:
                 accumulated += chunk.content
                 live.update(RichMarkdown(accumulated))
             chunks.append(chunk)
+
     if not chunks:
         return None
     response = chunks[0]
