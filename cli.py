@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -135,6 +136,22 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
         return f"[read_file] Error: {e}"
 
 
+PATH_ARGS = {
+    "list_files": ["path"],
+    "glob_files": ["cwd"],
+    "rg_search": ["path"],
+    "read_file": ["path"],
+}
+
+
+def resolve_paths(tool_name: str, args: dict, cwd: str) -> dict:
+    args = dict(args)
+    for key in PATH_ARGS.get(tool_name, []):
+        if key in args and not pathlib.Path(args[key]).is_absolute():
+            args[key] = str(pathlib.Path(cwd) / args[key])
+    return args
+
+
 def stream_response(llm_with_tools, messages, console):
     chunks = []
     accumulated = ""
@@ -162,7 +179,7 @@ def stream_response(llm_with_tools, messages, console):
     return response
 
 
-def run_turn(llm_with_tools, messages, user_input, console):
+def run_turn(llm_with_tools, messages, user_input, console, initial_cwd: str = "."):
     messages.append(HumanMessage(content=user_input))
     response = stream_response(llm_with_tools, messages, console)
     messages.append(response)
@@ -172,7 +189,8 @@ def run_turn(llm_with_tools, messages, user_input, console):
         for tc in response.tool_calls:
             info = escape(f"[tool: {tc['name']}({tc['args']})]")
             console.print(f"[dim]  {info}[/dim]")
-            result = tools[tc["name"]].invoke(tc["args"])
+            resolved_args = resolve_paths(tc["name"], tc["args"], initial_cwd)
+            result = tools[tc["name"]].invoke(resolved_args)
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
         response = stream_response(llm_with_tools, messages, console)
         messages.append(response)
@@ -182,7 +200,8 @@ def main():
     console = Console()
     llm = ChatOllama(model=MODEL)
     llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file])
-    messages = [SystemMessage(content=SYSTEM_PROMPT)]
+    initial_cwd = str(pathlib.Path.cwd())
+    messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
 
     _toolbar_style = Style.from_dict({
         "bottom-toolbar": "bg:default fg:default noreverse",
@@ -211,7 +230,7 @@ def main():
         console.print(f"[bold orange1]> {escape(user_input)}[/bold orange1]")
         console.print()
 
-        run_turn(llm_with_tools, messages, user_input, console)
+        run_turn(llm_with_tools, messages, user_input, console, initial_cwd)
 
 
 if __name__ == "__main__":
