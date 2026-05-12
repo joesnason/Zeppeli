@@ -16,7 +16,8 @@ from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
-MODEL = "gemma4:26b-nvfp4"
+MODEL = "gemma4:26b-nvfp4"  # for Mac Mini 64G
+# MODEL = "gemma4:e2b"  # for MacBook Air 8G
 RG_BIN = str(pathlib.Path(__file__).parent / "bin" / "rg")
 
 SLASH_COMMANDS = ["/exit", "/quit"]
