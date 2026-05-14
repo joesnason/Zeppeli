@@ -73,6 +73,7 @@ At startup, `main()` captures `initial_cwd = pathlib.Path.cwd()` (the directory 
 | `glob_files(pattern, cwd)` | `subprocess` → `node -e` using `node:fs/promises` `glob` | relative `cwd` resolved against `initial_cwd`; requires Node.js 22+ |
 | `rg_search(pattern, path, glob)` | `subprocess` → `bin/rg` | relative `path` resolved against `initial_cwd`; uses bundled binary |
 | `read_file(path, offset, limit, max_lines, max_bytes)` | pure Python `open()` | relative `path` resolved against `initial_cwd`; 400 lines/call max; returns next `offset` hint |
+| `write_file(path, content)` | pure Python `pathlib.Path.write_text` | relative `path` resolved against `initial_cwd`; creates intermediate directories; overwrites existing content |
 
 ## Key Functions (`cli.py`)
 
