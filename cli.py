@@ -162,8 +162,11 @@ PATH_ARGS = {
 def resolve_paths(tool_name: str, args: dict, cwd: str) -> dict:
     args = dict(args)
     for key in PATH_ARGS.get(tool_name, []):
-        if key in args and not pathlib.Path(args[key]).is_absolute():
-            args[key] = str(pathlib.Path(cwd) / args[key])
+        if key in args:
+            p = pathlib.Path(args[key]).expanduser()
+            if not p.is_absolute():
+                p = pathlib.Path(cwd) / p
+            args[key] = str(p)
     return args
 
 

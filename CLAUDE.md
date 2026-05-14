@@ -63,7 +63,10 @@ At startup, `main()` captures `initial_cwd = pathlib.Path.cwd()` (the directory 
 - Injected into the `SystemMessage` as `Working directory: <path>` so the model is aware of context
 - Passed to every `run_turn()` call, which resolves relative path arguments via `resolve_paths()` before invoking any tool
 
-`resolve_paths()` uses the `PATH_ARGS` map to know which argument of each tool is a path, and resolves it with `pathlib.Path(cwd) / arg` if not already absolute. Absolute paths are passed through unchanged.
+`resolve_paths()` uses the `PATH_ARGS` map to know which argument of each tool is a path. Resolution order:
+1. `.expanduser()` — expands `~/` to the real home directory
+2. If still not absolute, join with `cwd`
+3. Absolute paths pass through unchanged
 
 ## Available Tools
 
@@ -81,7 +84,7 @@ At startup, `main()` captures `initial_cwd = pathlib.Path.cwd()` (the directory 
 |---|---|
 | `stream_response(llm, messages, console)` | Shows `Thinking...` spinner, then streams one LLM response as live Markdown; returns accumulated `AIMessage` |
 | `run_turn(llm, messages, user_input, console, initial_cwd)` | Appends user message, calls `stream_response`, resolves tool paths, handles the tool-call loop |
-| `resolve_paths(tool_name, args, cwd)` | Resolves relative path args against `cwd` before tool invocation; uses `PATH_ARGS` map |
+| `resolve_paths(tool_name, args, cwd)` | Expands `~/`, then resolves relative paths against `cwd`; uses `PATH_ARGS` map |
 | `_get_toolbar()` | prompt_toolkit bottom_toolbar callback; always returns fixed-height string (rule + padded command lines) |
 | `main()` | REPL: captures `initial_cwd`, creates `PromptSession`, prints Rules around each turn, replaces typed line with orange echo |
 

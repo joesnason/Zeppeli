@@ -61,6 +61,8 @@ Bye!
 
 ## Tools
 
+Path arguments accept absolute paths, `~/…` (home-relative), or relative paths (resolved against the launch directory).
+
 | Tool | Description |
 |------|-------------|
 | `list_files(path)` | List files and directories via `ls -la` |
