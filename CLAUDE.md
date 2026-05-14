@@ -83,10 +83,31 @@ At startup, `main()` captures `initial_cwd = pathlib.Path.cwd()` (the directory 
 | Function | Purpose |
 |---|---|
 | `stream_response(llm, messages, console)` | Shows `Thinking...` spinner, then streams one LLM response as live Markdown; returns accumulated `AIMessage` |
-| `run_turn(llm, messages, user_input, console, initial_cwd)` | Appends user message, calls `stream_response`, resolves tool paths, handles the tool-call loop |
+| `run_turn(llm, messages, user_input, console, initial_cwd)` | Appends user message, calls `stream_response`, resolves tool paths, runs pre-tool hooks, handles the tool-call loop |
 | `resolve_paths(tool_name, args, cwd)` | Expands `~/`, then resolves relative paths against `cwd`; uses `PATH_ARGS` map |
+| `permission_ask(tool_name, args, console)` | Pre-tool hook: shows an inline arrow-key menu (↑↓ + Enter) asking user to allow or cancel; returns `bool` |
 | `_get_toolbar()` | prompt_toolkit bottom_toolbar callback; always returns fixed-height string (rule + padded command lines) |
 | `main()` | REPL: captures `initial_cwd`, creates `PromptSession`, prints Rules around each turn, replaces typed line with orange echo |
+
+## Pre-Tool Hooks
+
+`PRE_TOOL_HOOKS` is a `dict[str, callable]` that maps tool names to hook functions. Before any tool is invoked in `run_turn()`, the hook (if registered) is called:
+
+```python
+hook = PRE_TOOL_HOOKS.get(tc["name"])
+if hook is not None and not hook(tc["name"], resolved_args, console):
+    result = f"[{tc['name']}] Cancelled by user."
+else:
+    result = tools[tc["name"]].invoke(resolved_args)
+```
+
+- Hook signature: `(tool_name: str, args: dict, console: Console) -> bool`
+- Returns `True` → proceed; `False` → skip invocation and send a cancelled `ToolMessage` back to the AI
+- Currently registered: `"write_file"` → `permission_ask`
+
+`permission_ask` renders an inline prompt_toolkit `Application` with two options (`Yes` / `No`). Use ↑↓ to move the `▶` cursor and Enter to confirm. Default selection is **No**. Ctrl+C also cancels.
+
+To add a hook for another tool, add one entry to `PRE_TOOL_HOOKS`.
 
 ## Adding Tools
 
@@ -95,6 +116,7 @@ Define new tools with the `@tool` decorator in `cli.py`, then:
 2. Add to the `bind_tools([...])` call in both files
 3. Mention in `SYSTEM_PROMPT` (both files share the same prompt text)
 4. If the tool accepts a path argument, add it to the `PATH_ARGS` dict (e.g. `"my_tool": ["path"]`)
+5. If the tool needs a permission prompt, add it to `PRE_TOOL_HOOKS`
 
 ## Testing
 
