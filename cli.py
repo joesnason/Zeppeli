@@ -47,8 +47,9 @@ SYSTEM_PROMPT = """You are a helpful assistant with access to the following tool
 - glob_files(pattern, cwd): Find files matching a glob pattern (supports ** for recursive search). Default cwd is ".".
 - rg_search(pattern, path, glob): Search file contents using ripgrep (regex supported). Use glob to filter by filename (e.g. "*.py"). Default path is ".".
 - read_file(path, offset, limit, max_lines, max_bytes): Read a file in chunks of up to 400 lines starting at line offset. Stops when max_lines (default 10000) or max_bytes (default 98304 = 96KB) is reached. Use offset from the returned hint to paginate through large files.
+- write_file(path, content): Write content to a file, creating it if it doesn't exist or replacing all its content.
 
-Use these tools when the user asks about files, directories, folder contents, or searching within files.
+Use these tools when the user asks about files, directories, folder contents, searching within files, or writing/creating files.
 For questions unrelated to the filesystem, answer directly without using any tool."""
 
 
@@ -137,11 +138,24 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
         return f"[read_file] Error: {e}"
 
 
+@tool
+def write_file(path: str, content: str) -> str:
+    """Write content to a file, creating it if it does not exist or replacing all existing content."""
+    try:
+        p = pathlib.Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return f"Wrote {len(content)} bytes to {path}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 PATH_ARGS = {
     "list_files": ["path"],
     "glob_files": ["cwd"],
     "rg_search": ["path"],
     "read_file": ["path"],
+    "write_file": ["path"],
 }
 
 
@@ -185,7 +199,7 @@ def run_turn(llm_with_tools, messages, user_input, console, initial_cwd: str = "
     response = stream_response(llm_with_tools, messages, console)
     messages.append(response)
 
-    tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file]}
+    tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file, write_file]}
     while response.tool_calls:
         for tc in response.tool_calls:
             info = escape(f"[tool: {tc['name']}({tc['args']})]")
@@ -200,7 +214,7 @@ def run_turn(llm_with_tools, messages, user_input, console, initial_cwd: str = "
 def main():
     console = Console()
     llm = ChatOllama(model=MODEL)
-    llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file])
+    llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file, write_file])
     initial_cwd = str(pathlib.Path.cwd())
     messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
 
