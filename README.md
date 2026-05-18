@@ -21,7 +21,7 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip3 install langchain-ollama langchain-core ollama
+pip3 install langchain-ollama langchain-core ollama rich prompt_toolkit
 ```
 
 Or if you use [direnv](https://direnv.net/), `.envrc` activates the venv automatically.

@@ -22,6 +22,8 @@ RG_BIN = str(pathlib.Path(__file__).parent / "bin" / "rg")
 
 SLASH_COMMANDS = ["/exit", "/quit"]
 
+_ctx_state = {"tokens": 0}
+
 
 def _get_toolbar() -> str:
     from prompt_toolkit.application import get_app
@@ -31,6 +33,7 @@ def _get_toolbar() -> str:
         text = ""
     width = shutil.get_terminal_size().columns
     rule = "─" * width
+    ctx_k = f"Ctx: {_ctx_state['tokens'] // 1000} k" if _ctx_state["tokens"] else "Ctx: 0 k"
 
     matches = (
         [c for c in SLASH_COMMANDS if c.startswith(text)]
@@ -39,7 +42,7 @@ def _get_toolbar() -> str:
     )
     # Pad to fixed height so toolbar never resizes (prevents blank-line artifact)
     cmd_lines = matches + [""] * (len(SLASH_COMMANDS) - len(matches))
-    return "\n".join([rule] + cmd_lines)
+    return "\n".join([rule, ctx_k] + cmd_lines)
 
 SYSTEM_PROMPT = """You are a helpful assistant with access to the following tools:
 
@@ -252,10 +255,17 @@ def stream_response(llm_with_tools, messages, console):
     return response
 
 
+def _update_ctx(response):
+    usage = getattr(response, "usage_metadata", None)
+    if usage:
+        _ctx_state["tokens"] = usage["input_tokens"]
+
+
 def run_turn(llm_with_tools, messages, user_input, console, initial_cwd: str = "."):
     messages.append(HumanMessage(content=user_input))
     response = stream_response(llm_with_tools, messages, console)
     messages.append(response)
+    _update_ctx(response)
 
     tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file, write_file]}
     while response.tool_calls:
@@ -271,6 +281,7 @@ def run_turn(llm_with_tools, messages, user_input, console, initial_cwd: str = "
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
         response = stream_response(llm_with_tools, messages, console)
         messages.append(response)
+        _update_ctx(response)
 
 
 def main():
