@@ -6,7 +6,7 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 
 - Multi-turn conversation — AI remembers context across turns
 - Streaming output — responses print token by token
-- Tool calling — AI can inspect, search, and write files when relevant
+- Tool calling — AI can search/inspect files and edit (write/delete) files when relevant
 - Slash commands: `/exit` to quit
 
 ## Requirements
@@ -55,6 +55,10 @@ You> 建立一個 hello.txt，內容是 "Hello, world!"
   [tool: write_file({'path': 'hello.txt', 'content': 'Hello, world!'})]
 Zeppeli> 已建立 hello.txt，寫入 13 bytes。
 
+You> 刪除 hello.txt
+  [tool: delete_file({'path': 'hello.txt'})]
+Zeppeli> 已刪除 hello.txt。
+
 You> /exit
 Bye!
 ```
@@ -63,13 +67,23 @@ Bye!
 
 Path arguments accept absolute paths, `~/…` (home-relative), or relative paths (resolved against the launch directory).
 
+### Search
+
 | Tool | Description |
 |------|-------------|
 | `list_files(path)` | List files and directories via `ls -la` |
 | `glob_files(pattern, cwd)` | Find files by glob pattern via Node.js `fs.glob`; supports `**` |
 | `rg_search(pattern, path, glob)` | Search file contents with ripgrep (regex supported); uses bundled `bin/rg` |
 | `read_file(path, offset, limit, max_lines, max_bytes)` | Read a file in chunks of up to 400 lines; use `offset` to paginate; stops at 10 000 lines or 96 KB |
+
+### File Editing
+
+Both tools prompt for confirmation (`permission_ask`) before running.
+
+| Tool | Description |
+|------|-------------|
 | `write_file(path, content)` | Create a new file or replace all content in an existing file; creates intermediate directories automatically |
+| `delete_file(path)` | Delete a file; refuses to delete directories |
 
 ## Files
 

@@ -51,8 +51,9 @@ SYSTEM_PROMPT = """You are a helpful assistant with access to the following tool
 - rg_search(pattern, path, glob): Search file contents using ripgrep (regex supported). Use glob to filter by filename (e.g. "*.py"). Default path is ".".
 - read_file(path, offset, limit, max_lines, max_bytes): Read a file in chunks of up to 400 lines starting at line offset. Stops when max_lines (default 10000) or max_bytes (default 98304 = 96KB) is reached. Use offset from the returned hint to paginate through large files.
 - write_file(path, content): Write content to a file, creating it if it doesn't exist or replacing all its content.
+- delete_file(path): Delete a file. Does not delete directories.
 
-Use these tools when the user asks about files, directories, folder contents, searching within files, or writing/creating files.
+Use these tools when the user asks about files, directories, folder contents, searching within files, or writing/creating/deleting files.
 For questions unrelated to the filesystem, answer directly without using any tool."""
 
 
@@ -153,12 +154,28 @@ def write_file(path: str, content: str) -> str:
         return f"Error: {e}"
 
 
+@tool
+def delete_file(path: str) -> str:
+    """Delete a file. Refuses to delete directories."""
+    try:
+        p = pathlib.Path(path)
+        if not p.exists():
+            return f"[delete_file] Error: file not found: {path}"
+        if p.is_dir():
+            return f"[delete_file] Error: {path} is a directory, not a file"
+        p.unlink()
+        return f"Deleted {path}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 PATH_ARGS = {
     "list_files": ["path"],
     "glob_files": ["cwd"],
     "rg_search": ["path"],
     "read_file": ["path"],
     "write_file": ["path"],
+    "delete_file": ["path"],
 }
 
 
@@ -181,7 +198,8 @@ def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
     from prompt_toolkit.layout.controls import FormattedTextControl
 
     path = args.get("path", "")
-    console.print(f"[yellow]  AI wants to write to:[/yellow] [bold]{path}[/bold]")
+    action = "delete" if tool_name == "delete_file" else "write to"
+    console.print(f"[yellow]  AI wants to {action}:[/yellow] [bold]{path}[/bold]")
 
     options = [("Yes", True), ("No", False)]
     state = {"idx": 1}  # default: No
@@ -225,6 +243,7 @@ def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
 
 PRE_TOOL_HOOKS: dict[str, callable] = {
     "write_file": permission_ask,
+    "delete_file": permission_ask,
 }
 
 
@@ -267,7 +286,7 @@ def run_turn(llm_with_tools, messages, user_input, console, initial_cwd: str = "
     messages.append(response)
     _update_ctx(response)
 
-    tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file, write_file]}
+    tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file, write_file, delete_file]}
     while response.tool_calls:
         for tc in response.tool_calls:
             info = escape(f"[tool: {tc['name']}({tc['args']})]")
@@ -287,7 +306,7 @@ def run_turn(llm_with_tools, messages, user_input, console, initial_cwd: str = "
 def main():
     console = Console()
     llm = ChatOllama(model=MODEL)
-    llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file, write_file])
+    llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file, write_file, delete_file])
     initial_cwd = str(pathlib.Path.cwd())
     messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
 

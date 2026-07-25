@@ -15,8 +15,10 @@ SYSTEM_PROMPT = """You are a helpful assistant with access to the following tool
 - glob_files(pattern, cwd): Find files matching a glob pattern (supports ** for recursive search). Default cwd is ".".
 - rg_search(pattern, path, glob): Search file contents using ripgrep (regex supported). Use glob to filter by filename (e.g. "*.py"). Default path is ".".
 - read_file(path, offset, limit, max_lines, max_bytes): Read a file in chunks of up to 400 lines starting at line offset. Stops when max_lines (default 10000) or max_bytes (default 98304 = 96KB) is reached. Use offset from the returned hint to paginate through large files.
+- write_file(path, content): Write content to a file, creating it if it doesn't exist or replacing all its content.
+- delete_file(path): Delete a file. Does not delete directories.
 
-Use these tools when the user asks about files, directories, folder contents, or searching within files.
+Use these tools when the user asks about files, directories, folder contents, searching within files, or writing/creating/deleting files.
 For questions unrelated to the filesystem, answer directly without using any tool."""
 
 
@@ -105,9 +107,36 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
         return f"[read_file] Error: {e}"
 
 
+@tool
+def write_file(path: str, content: str) -> str:
+    """Write content to a file, creating it if it does not exist or replacing all existing content."""
+    try:
+        p = pathlib.Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return f"Wrote {len(content)} bytes to {path}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@tool
+def delete_file(path: str) -> str:
+    """Delete a file. Refuses to delete directories."""
+    try:
+        p = pathlib.Path(path)
+        if not p.exists():
+            return f"[delete_file] Error: file not found: {path}"
+        if p.is_dir():
+            return f"[delete_file] Error: {path} is a directory, not a file"
+        p.unlink()
+        return f"Deleted {path}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 def run_agent(user_prompt: str) -> str:
     llm = ChatOllama(model=MODEL)
-    llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file])
+    llm_with_tools = llm.bind_tools([list_files, glob_files, rg_search, read_file, write_file, delete_file])
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
@@ -119,7 +148,7 @@ def run_agent(user_prompt: str) -> str:
     response = llm_with_tools.invoke(messages)
 
     # Stateful tool execution loop — full message history kept each round
-    tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file]}
+    tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file, write_file, delete_file]}
     while response.tool_calls:
         messages.append(response)
         for tc in response.tool_calls:
