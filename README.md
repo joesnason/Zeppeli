@@ -21,7 +21,7 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip3 install langchain-ollama langchain-core ollama rich prompt_toolkit
+pip3 install -r requirements.txt
 ```
 
 Or if you use [direnv](https://direnv.net/), `.envrc` activates the venv automatically.
@@ -65,25 +65,10 @@ Bye!
 
 ## Tools
 
-Path arguments accept absolute paths, `~/…` (home-relative), or relative paths (resolved against the launch directory).
-
-### Search
-
-| Tool | Description |
-|------|-------------|
-| `list_files(path)` | List files and directories via `ls -la` |
-| `glob_files(pattern, cwd)` | Find files by glob pattern via Node.js `fs.glob`; supports `**` |
-| `rg_search(pattern, path, glob)` | Search file contents with ripgrep (regex supported); uses bundled `bin/rg` |
-| `read_file(path, offset, limit, max_lines, max_bytes)` | Read a file in chunks of up to 400 lines; use `offset` to paginate; stops at 10 000 lines or 96 KB |
-
-### File Editing
-
-Both tools prompt for confirmation (`permission_ask`) before running.
-
-| Tool | Description |
-|------|-------------|
-| `write_file(path, content)` | Create a new file or replace all content in an existing file; creates intermediate directories automatically |
-| `delete_file(path)` | Delete a file; refuses to delete directories |
+The AI has access to tools for searching/inspecting files and for editing
+(write/delete) files, with destructive actions requiring interactive
+confirmation. See [`docs/tools.md`](docs/tools.md) for the full list and
+implementation details.
 
 ## Files
 
@@ -91,7 +76,9 @@ Both tools prompt for confirmation (`permission_ask`) before running.
 |------|---------|
 | `cli.py` | Interactive CLI entry point |
 | `test_tool_call.py` | Batch test script for tool calling |
+| `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
+| `docs/` | Implementation details (tool internals, etc.) |
 
 ## Exit
 

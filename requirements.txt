@@ -1,0 +1,5 @@
+langchain-ollama>=1.1.0
+langchain-core>=1.5.3
+ollama>=0.6.2
+rich>=15.0.0
+prompt_toolkit>=3.0.53
