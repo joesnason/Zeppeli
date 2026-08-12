@@ -75,6 +75,8 @@ implementation details.
 | File | Purpose |
 |------|---------|
 | `cli.py` | Interactive CLI entry point |
+| `core/` | AI agent/model layer — tool definitions, path resolution, Ollama loading |
+| `ui/` | User interaction layer — REPL loop, streaming/Markdown rendering, permission prompts |
 | `test_tool_call.py` | Batch test script for tool calling |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |

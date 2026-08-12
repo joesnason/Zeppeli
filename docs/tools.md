@@ -1,19 +1,26 @@
 # Tools
 
 Zeppeli exposes a fixed set of LangChain `@tool`-decorated functions to the model
-via `llm.bind_tools([...])` in `cli.py`. This document describes each tool's
-signature, behavior, and implementation details.
+via `llm.bind_tools([...])`, wired up in `core/agent.py`'s `load_llm()`. This
+document describes each tool's signature, behavior, and implementation
+details. All tool code lives in `core/tools.py` — see `CLAUDE.md`'s
+"Architecture" section for the `core/`/`ui/` layering this file's code sits in.
 
-All tools are defined in `cli.py` and registered in `run_turn()` / `main()`:
+All tools are defined in `core/tools.py`:
 
 ```python
-tools = {t.name: t for t in [list_files, glob_files, rg_search, read_file, write_file, delete_file]}
+TOOLS = [list_files, glob_files, rg_search, read_file, write_file, delete_file]
+TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 ```
+
+`TOOLS` feeds `load_llm()`'s `bind_tools()` call; `TOOLS_BY_NAME` is used by
+`ui/turn.py`'s `run_turn()` (and `test_tool_call.py`'s `run_agent()`) to look
+up and invoke a tool by name once the model requests a call.
 
 ## Path resolution
 
 Every tool argument listed in `PATH_ARGS` is resolved before the tool runs, via
-`resolve_paths()`:
+`resolve_paths()` (both in `core/tools.py`):
 
 ```python
 PATH_ARGS = {
@@ -30,8 +37,8 @@ Resolution rules, applied in order:
 
 1. `~/…` is expanded to the user's home directory (`pathlib.Path.expanduser()`).
 2. If the resulting path is still relative, it is joined against `initial_cwd`
-   — the directory `cli.py` was launched from (captured once in `main()`), not
-   the model's current working directory or any per-turn state.
+   — the directory the CLI was launched from (captured once in `ui/repl.py`'s
+   `main()`), not the model's current working directory or any per-turn state.
 3. Absolute paths pass through unchanged.
 
 This means the model can pass any of: an absolute path, `~/foo`, or a bare
@@ -41,7 +48,8 @@ regardless of what the shell's cwd happens to be at tool-call time.
 ## Pre-tool hooks (permission prompts)
 
 Some tools are considered destructive and run through a confirmation hook
-before executing. The hook registry:
+before executing. This is a `ui/` concern — `permission_ask()` and the hook
+registry both live in `ui/permissions.py`:
 
 ```python
 PRE_TOOL_HOOKS: dict[str, callable] = {
@@ -50,11 +58,12 @@ PRE_TOOL_HOOKS: dict[str, callable] = {
 }
 ```
 
-`run_turn()` checks this dict for every tool call: if a hook is registered, it
-is invoked with `(tool_name, resolved_args, console)` and must return `True`
-for the tool to actually run. If it returns `False` (or the user cancels), the
-tool is skipped and the model receives `"[<tool_name>] Cancelled by user."` as
-the tool result instead of the real output.
+`run_turn()` (`ui/turn.py`) checks this dict for every tool call: if a hook is
+registered, it is invoked with `(tool_name, resolved_args, console)` and must
+return `True` for the tool to actually run. If it returns `False` (or the user
+cancels), the tool is skipped and the model receives
+`"[<tool_name>] Cancelled by user."` as the tool result instead of the real
+output.
 
 `permission_ask()` renders an interactive prompt_toolkit yes/no menu:
 
@@ -102,8 +111,10 @@ a bundled binary).
 ### `rg_search(pattern, path=".", glob="")`
 
 Searches file contents with ripgrep, using the binary bundled at `bin/rg`
-(`RG_BIN`, resolved relative to `cli.py`'s own directory so it works
-regardless of launch cwd):
+(`RG_BIN`, defined in `core/tools.py` as
+`Path(__file__).parent.parent / "bin" / "rg"` — one `.parent` to get out of
+`core/` plus one to reach the repo root — so it resolves correctly regardless
+of launch cwd):
 
 ```python
 cmd = [RG_BIN, "--no-heading", "--color=never", pattern, path]
@@ -190,14 +201,16 @@ p.unlink()
 
 ## Adding a new tool
 
-1. Define it with `@tool` in `cli.py` and give it a clear docstring — the
-   docstring is what the model sees as the tool description.
-2. Add it to the `tools` dict build in `run_turn()` and the `bind_tools([...])`
-   call in `main()`.
-3. Describe it in `SYSTEM_PROMPT` so the model knows when to reach for it.
-4. If it takes a filesystem path argument, add an entry to `PATH_ARGS` so
-   `resolve_paths()` normalizes it.
-5. If it's destructive/irreversible, register it in `PRE_TOOL_HOOKS` (reusing
-   `permission_ask` or writing a new hook with the same
-   `(tool_name, args, console) -> bool` signature).
+1. Define it with `@tool` in `core/tools.py` and give it a clear docstring —
+   the docstring is what the model sees as the tool description.
+2. Add it to the `TOOLS` list in `core/tools.py` — this alone updates
+   `TOOLS_BY_NAME` and `load_llm()`'s `bind_tools()` call, so `cli.py`,
+   `ui/turn.py`, and `test_tool_call.py` all pick it up automatically.
+3. Describe it in `SYSTEM_PROMPT` (`core/agent.py`) so the model knows when to
+   reach for it.
+4. If it takes a filesystem path argument, add an entry to `PATH_ARGS`
+   (`core/tools.py`) so `resolve_paths()` normalizes it.
+5. If it's destructive/irreversible, register it in `PRE_TOOL_HOOKS`
+   (`ui/permissions.py`; reuse `permission_ask` or write a new hook with the
+   same `(tool_name, args, console) -> bool` signature).
 6. Document it here in `docs/tools.md`.
