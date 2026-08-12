@@ -6,10 +6,11 @@ from langchain_core.messages import HumanMessage, ToolMessage
 
 from core import TOOLS_BY_NAME, resolve_paths
 from .streaming import stream_response, _update_ctx
-from .permissions import PRE_TOOL_HOOKS
+from .permissions import PRE_TOOL_HOOKS, reset_turn_approvals
 
 
 def run_turn(llm_with_tools, messages, user_input: str, console: Console, initial_cwd: str = "."):
+    reset_turn_approvals()
     messages.append(HumanMessage(content=user_input))
     response = stream_response(llm_with_tools, messages, console)
     messages.append(response)

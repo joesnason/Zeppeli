@@ -65,13 +65,39 @@ cancels), the tool is skipped and the model receives
 `"[<tool_name>] Cancelled by user."` as the tool result instead of the real
 output.
 
-`permission_ask()` renders an interactive prompt_toolkit yes/no menu:
+`permission_ask()` first checks whether this exact call was already approved
+(see "Approval records" below); if so, it skips straight to `return True`
+with a dim note instead of prompting. Otherwise it renders an interactive
+prompt_toolkit menu with three options:
 
 - Prints the pending action (`write to` or `delete`) and target path.
-- Arrow keys move a `▶` selection cursor between **Yes** / **No** (default:
-  **No**, i.e. `state["idx"] = 1`).
+- Arrow keys move a `▶` selection cursor between **Yes** / **Always allow
+  (this session)** / **No** (default: **No**, i.e. `state["idx"] = 2`).
 - `Enter` confirms the highlighted option.
-- `Ctrl-C` cancels (treated as **No**).
+- `Ctrl-C` cancels (treated as **No** / deny).
+- Choosing **Yes** or **Always allow (this session)** records an approval
+  (turn-scoped or session-scoped respectively) before returning `True`.
+  Choosing **No** returns `False` without recording anything.
+
+### Approval records
+
+`ui/permissions.py` tracks approvals in two in-memory sets, keyed by
+**`(tool_name, path)`** so approving one file's write doesn't approve a
+different file's:
+
+```python
+_session_approved: set[tuple[str, str]] = set()
+_turn_approved: set[tuple[str, str]] = set()
+```
+
+- **turn scope** — cleared by `reset_turn_approvals()`, which `run_turn()`
+  (`ui/turn.py`) calls once at the start of every turn, so it never survives
+  into the next user input
+- **session scope** — never cleared; lives for the process's lifetime only,
+  no disk persistence
+
+Denials are never recorded, so a declined call is prompted again on its next
+occurrence.
 
 This hook mechanism is generic — new destructive tools can opt in by adding
 an entry to `PRE_TOOL_HOOKS`, without changing `run_turn()`.
