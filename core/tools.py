@@ -39,15 +39,27 @@ const {{ glob }} = require('node:fs/promises');
 
 
 @tool
-def rg_search(pattern: str, path: str = ".", glob: str = "") -> str:
-    """Search file contents using ripgrep. Supports regex. Use glob to filter by filename (e.g. '*.py')."""
+def rg_search(pattern: str, path: str = ".", glob: str = "", max_bytes: int = 50000) -> str:
+    """Search file contents using ripgrep. Supports regex. Use glob to filter by filename (e.g. '*.py').
+    Output is capped at max_bytes (default 50000) so a broad match against a huge file (e.g. a build
+    log) can't blow out the model's context window in one call — narrow the pattern or glob if truncated."""
     cmd = [RG_BIN, "--no-heading", "--color=never", pattern, path]
     if glob:
         cmd += ["--glob", glob]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 2:
         return f"Error: {result.stderr.strip()}"
-    return result.stdout.strip() or "(no matches)"
+    output = result.stdout.strip()
+    if not output:
+        return "(no matches)"
+    output_bytes = output.encode()
+    if len(output_bytes) > max_bytes:
+        output = (
+            output_bytes[:max_bytes].decode(errors="ignore")
+            + f"\n[Output truncated at {max_bytes} bytes — narrow the pattern or "
+              "glob to see fewer, more targeted matches.]"
+        )
+    return output
 
 
 @tool

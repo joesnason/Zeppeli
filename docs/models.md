@@ -134,10 +134,13 @@ its last known value instead of updating — no crash, no code change needed.
 
 `test_model_config.py` covers all of the flag/env-var resolution logic and
 `load_llm()`'s branching with no Ollama or network dependency — see
-[`docs/manual-testing.md`](manual-testing.md). An actual end-to-end round
-trip against a real cloud endpoint (confirming tool-calling and streaming
-both work against that specific provider) requires credentials only you
-have, and isn't something this repo's automated tests can cover:
+[`docs/manual-testing.md`](manual-testing.md).
+
+An actual end-to-end round trip against a real cloud endpoint
+(`--base-url`/`--model`/`--api-key`, confirming both config resolution and
+streaming work against a real provider) has been manually verified
+end-to-end (2026-08-13) — this still requires credentials only you have, so
+it isn't something this repo's automated tests can cover on their own:
 
 ```bash
 python3 cli.py --base-url <real-url> --model openai/<real-model> --api-key <key> -p "What is 2 + 2?"

@@ -169,7 +169,7 @@ before being passed to `node -e`. Requires Node.js 22+ on `PATH` (this is
 the only tool with a Node.js dependency — everything else is pure Python or
 a bundled binary).
 
-### `rg_search(pattern, path=".", glob="")`
+### `rg_search(pattern, path=".", glob="", max_bytes=50000)`
 
 Searches file contents with ripgrep, using the binary bundled at `bin/rg`
 (`RG_BIN`, defined in `core/tools.py` as
@@ -190,6 +190,22 @@ to code 1 for "no matches").
 
 The bundled binary is built for `aarch64-apple-darwin` — it will not run on
 other platforms/architectures without swapping the binary at `bin/rg`.
+
+Output is capped at `max_bytes` (default 50 000, measured as UTF-8-encoded
+byte length): a broad pattern against a large file (e.g. a build log with
+many `FAILED`/`error:` lines) can otherwise return tens of thousands of
+tokens in one call, which — especially against a small-context cloud model
+— can blow past the model's context window and raise an unhandled
+`ContextWindowExceededError` deep in litellm. If the raw output exceeds
+`max_bytes`, it's cut off at that byte offset and a
+`[Output truncated at <n> bytes — narrow the pattern or glob to see fewer,
+more targeted matches.]` note is appended, telling the model to narrow its
+next call rather than silently losing matches. Unlike `read_file`, there's
+no pagination/offset mechanism here — `rg_search` doesn't currently support
+resuming past the truncation point; narrowing `pattern`/`glob` is the only
+way to see the rest. `ui/streaming.py`'s `stream_response()` also catches
+and reports (rather than crashes on) any model-call exception that still
+makes it through, including this one — see its module docstring.
 
 ### `read_file(path, offset=0, limit=400, max_lines=10000, max_bytes=98304)`
 

@@ -15,6 +15,8 @@ def run_turn(llm_with_tools, messages, user_input: str, console: Console,
     hooks = build_pre_tool_hooks(mode, initial_cwd)
     messages.append(HumanMessage(content=user_input))
     response = stream_response(llm_with_tools, messages, console)
+    if response is None:
+        return
     messages.append(response)
     _update_ctx(response)
 
@@ -34,5 +36,7 @@ def run_turn(llm_with_tools, messages, user_input: str, console: Console,
                 result = TOOLS_BY_NAME[tc["name"]].invoke(resolved_args)
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
         response = stream_response(llm_with_tools, messages, console)
+        if response is None:
+            return
         messages.append(response)
         _update_ctx(response)
