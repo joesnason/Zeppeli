@@ -30,8 +30,13 @@ def load_llm(model: str | None = None, base_url: str | None = None, api_key: str
 
 Both branches call `.bind_tools(TOOLS)` the same way, so everything
 downstream (`ui/turn.py`'s tool-call loop, `ui/streaming.py`'s
-token-by-token rendering) is unaffected by which backend loaded — both
-present the same LangChain chat-model interface once bound.
+token-by-token rendering) works against the same LangChain chat-model
+interface once bound. One shape difference does leak through, though: chunk
+`.content` itself. `ChatOllama` chunks give a plain `str`; some
+litellm-routed backends give a list of content blocks instead — see
+"`AIMessageChunk.content` as a list of blocks" below. `ui/streaming.py`'s
+`_extract_text()` normalizes both shapes before Markdown rendering, so
+callers of `stream_response()` don't need to care which backend loaded.
 
 ## CLI flags and env-var fallbacks
 
@@ -90,6 +95,24 @@ fields — a plain OpenAI-compatible custom endpoint is likely unaffected,
 but this needs verifying against whatever real endpoint you point it at.
 This is deliberately **not** coded around here; treat it as a "test it
 yourself once" item, not a known bug in this project's code.
+
+### `AIMessageChunk.content` as a list of blocks
+
+This one *is* coded around, in `ui/streaming.py`. `ChatOllama` chunks always
+give `.content` as a plain `str`. Some litellm-routed backends (observed
+with an Anthropic-style API behind `ChatLiteLLM`) instead give `.content` as
+a list of content blocks, e.g. `[{"type": "text", "text": "..."}]`,
+sometimes mixed with non-text blocks (`tool_use`, etc.). Before this was
+handled, `stream_response()` assigned that list straight into its
+`accumulated` string and `RichMarkdown(accumulated)` raised
+`TypeError: Input data should be a string, not <class 'list'>` on the very
+first chunk.
+
+`_extract_text(content)` flattens either shape (`str`, or `list` of
+`str`/`{"type": "text", "text": ...}` dicts, ignoring other block types)
+into plain text; `stream_response()` calls it on every chunk instead of
+using `chunk.content` directly. Covered by `test_streaming.py`, no live
+endpoint required.
 
 ## `usage_metadata` and the toolbar's `Ctx: xx k` counter
 

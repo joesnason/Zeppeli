@@ -108,6 +108,7 @@ implementation details.
 | `test_tool_call.py` | Batch test script for tool calling |
 | `test_permission_modes.py` | Automated tests for permission-mode logic — no Ollama needed |
 | `test_model_config.py` | Automated tests for model/cloud config resolution — no Ollama/network needed |
+| `test_streaming.py` | Automated tests for chunk-content normalization in streaming — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
 | `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md) and [`docs/models.md`](docs/models.md) |

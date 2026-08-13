@@ -7,6 +7,27 @@ from rich.markdown import Markdown as RichMarkdown
 _ctx_state = {"tokens": 0}
 
 
+def _extract_text(content) -> str:
+    """Normalize an AIMessage chunk's `.content` into plain text.
+
+    ChatOllama chunks give a plain str. Some litellm-routed cloud/self-hosted
+    backends (e.g. Anthropic-style APIs) instead give a list of str/dict
+    content blocks (e.g. [{"type": "text", "text": "..."}], possibly mixed
+    with non-text blocks like tool_use) — those must be flattened to text
+    before Markdown rendering, or RichMarkdown(...) raises a TypeError."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+        return "".join(parts)
+    return ""
+
+
 def stream_response(llm_with_tools, messages, console: Console):
     """Show a 'Thinking...' spinner until the first content token arrives, then
     stream the rest of the response as live-updating Markdown. Returns the
@@ -18,14 +39,16 @@ def stream_response(llm_with_tools, messages, console: Console):
     with console.status("[dim]Thinking...[/dim]", spinner="dots"):
         for chunk in stream:
             chunks.append(chunk)
-            if chunk.content:
-                accumulated = chunk.content
+            text = _extract_text(chunk.content)
+            if text:
+                accumulated = text
                 break
 
     with Live(RichMarkdown(accumulated), console=console, refresh_per_second=15) as live:
         for chunk in stream:
-            if chunk.content:
-                accumulated += chunk.content
+            text = _extract_text(chunk.content)
+            if text:
+                accumulated += text
                 live.update(RichMarkdown(accumulated))
             chunks.append(chunk)
 
