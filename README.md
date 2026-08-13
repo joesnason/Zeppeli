@@ -47,6 +47,11 @@ By default, every write/delete asks for confirmation (see
 
 (`--yolo-mode` and `--auto-mode` are mutually exclusive.)
 
+The bottom toolbar shows the loaded model and current permission mode
+(`Model: <name>  |  Manual mode` by default). Press **Shift+Tab** at any
+time in the REPL to toggle live between Manual and Auto mode without
+restarting (no effect if launched with `--yolo-mode`).
+
 - `python3 cli.py -p "<prompt>"` (or `--prompt`) — run one turn
   non-interactively with `<prompt>` as input, print the response, and exit
   (skips the REPL). Combine with `--yolo-mode`/`--auto-mode` as needed —

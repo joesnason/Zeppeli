@@ -105,6 +105,21 @@ Expect: prints the answer, then returns straight to the shell — no `>` REPL
 prompt ever appears, `time` shows roughly one model round-trip, exit code
 `0`.
 
+### 6. Shift+Tab toggles Manual ↔ Auto mid-session
+
+```bash
+python3 cli.py
+```
+
+Expect: toolbar starts at `Model: <name>  |  Manual mode` (teal). Press
+Shift+Tab at the input prompt: the label/color flip immediately to `auto
+mode` (amber), with no Enter needed. Then run a write inside the launch dir
+(e.g. `Create a file called scratch_test.txt containing the text hello`) —
+it auto-approves with a dim note, no prompt, confirming the *next* turn
+picked up the toggled mode. Press Shift+Tab again: flips back to `Manual
+mode` (teal). Now launch with `--yolo-mode` and press Shift+Tab — the label
+stays `yolo mode`; the toggle is a no-op there.
+
 ### Also worth re-checking after any change here
 
 - The cancellation-message fix: in approval or auto-mode, choose **No** on a
