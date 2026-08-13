@@ -11,7 +11,14 @@ Records are keyed by (tool_name, path) — approving a write to one file does
 not approve a write to a different file.
 """
 
+import pathlib
+
 from rich.console import Console
+
+MODE_APPROVAL = "approval"
+MODE_YOLO = "yolo"
+MODE_AUTO = "auto"
+VALID_MODES = (MODE_APPROVAL, MODE_YOLO, MODE_AUTO)
 
 _session_approved: set[tuple[str, str]] = set()
 _turn_approved: set[tuple[str, str]] = set()
@@ -111,3 +118,43 @@ PRE_TOOL_HOOKS: dict[str, callable] = {
     "write_file": permission_ask,
     "delete_file": permission_ask,
 }
+
+
+def _is_within_cwd(path: str, cwd: str) -> bool:
+    """True if `path` resolves to somewhere inside `cwd` (symlinks and `..`
+    segments included, via Path.resolve())."""
+    try:
+        return pathlib.Path(path).resolve().is_relative_to(pathlib.Path(cwd).resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _make_auto_hook(initial_cwd: str) -> callable:
+    """Build an auto-mode hook: auto-approve when the path is inside
+    `initial_cwd`, otherwise fall back to the normal interactive prompt."""
+
+    def _auto_hook(tool_name: str, args: dict, console: Console) -> bool:
+        path = args.get("path", "")
+        if _is_within_cwd(path, initial_cwd):
+            console.print(f"[dim]  ✓ auto-approved (auto-mode): {tool_name} → {path}[/dim]")
+            return True
+        return permission_ask(tool_name, args, console)
+
+    return _auto_hook
+
+
+def build_pre_tool_hooks(mode: str, initial_cwd: str) -> dict[str, callable]:
+    """Return the PRE_TOOL_HOOKS-shaped dict to use for the given mode.
+
+    - MODE_YOLO: no hooks at all — every call runs unguarded, identical to
+      having no PRE_TOOL_HOOKS entries.
+    - MODE_AUTO: write_file/delete_file auto-approve inside `initial_cwd`,
+      otherwise fall back to permission_ask().
+    - MODE_APPROVAL (default/unrecognized): today's behavior, unchanged.
+    """
+    if mode == MODE_YOLO:
+        return {}
+    if mode == MODE_AUTO:
+        hook = _make_auto_hook(initial_cwd)
+        return {"write_file": hook, "delete_file": hook}
+    return dict(PRE_TOOL_HOOKS)

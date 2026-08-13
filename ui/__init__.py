@@ -4,5 +4,6 @@ back from here.
 """
 
 from .repl import main
+from .permissions import MODE_APPROVAL, MODE_AUTO, MODE_YOLO
 
-__all__ = ["main"]
+__all__ = ["main", "MODE_APPROVAL", "MODE_YOLO", "MODE_AUTO"]

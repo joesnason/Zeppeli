@@ -58,12 +58,45 @@ PRE_TOOL_HOOKS: dict[str, callable] = {
 }
 ```
 
-`run_turn()` (`ui/turn.py`) checks this dict for every tool call: if a hook is
-registered, it is invoked with `(tool_name, resolved_args, console)` and must
-return `True` for the tool to actually run. If it returns `False` (or the user
-cancels), the tool is skipped and the model receives
-`"[<tool_name>] Cancelled by user."` as the tool result instead of the real
-output.
+`run_turn()` (`ui/turn.py`) doesn't read `PRE_TOOL_HOOKS` directly — it calls
+`build_pre_tool_hooks(mode, initial_cwd)` once per turn (right after
+`reset_turn_approvals()`) and checks the returned dict for every tool call.
+If a hook is present for a tool, it is invoked with
+`(tool_name, resolved_args, console)` and must return `True` for the tool to
+actually run. If it returns `False` (or the user cancels), the tool is
+skipped and the model receives an explicit `"[<tool_name>] CANCELLED: the
+user denied permission..."` message as the tool result instead of the real
+output — worded deliberately strongly (and reinforced by a rule in
+`SYSTEM_PROMPT`, `core/agent.py`) so the model reports the cancellation
+accurately instead of hallucinating success, which it has been observed to
+do with a milder message.
+
+### Permission modes
+
+`build_pre_tool_hooks(mode, initial_cwd) -> dict[str, callable]` is the
+single dispatch point that decides which hooks (if any) apply, based on the
+mode chosen at launch (`cli.py`'s `--yolo-mode` / `--auto-mode` flags, default
+none of them). The three mode constants live in `ui/permissions.py`:
+
+| Mode | Constant | Behavior |
+|------|----------|----------|
+| approval (default) | `MODE_APPROVAL` | Returns `dict(PRE_TOOL_HOOKS)` — every `write_file`/`delete_file` call prompts via `permission_ask()`, exactly as described above. |
+| yolo | `MODE_YOLO` | Returns `{}` — no hooks at all. `hooks.get(tc["name"])` is always `None`, so every tool call runs unguarded, with no prompt of any kind. |
+| auto | `MODE_AUTO` | Returns `write_file`/`delete_file` mapped to a hook built by `_make_auto_hook(initial_cwd)`. |
+
+`_make_auto_hook(initial_cwd)` returns a hook that checks
+`_is_within_cwd(path, initial_cwd)` (resolves both sides with
+`Path.resolve()`, so `..` segments and symlinks are handled correctly): if
+the resolved path is inside `initial_cwd`, it auto-approves with a dim note
+and no prompt; otherwise it delegates to the real `permission_ask()`, so
+calls outside the launch directory still get the full interactive prompt
+(including turn/session remember-approval).
+
+`python3 cli.py -p "<prompt>"` (one-shot mode, see README) goes through the
+exact same `run_turn(..., mode)` call as a normal REPL turn — there's no
+special-casing per mode for one-shot invocations. See
+[`docs/manual-testing.md`](manual-testing.md) for a hands-on checklist that
+exercises all three modes via `-p`.
 
 `permission_ask()` first checks whether this exact call was already approved
 (see "Approval records" below); if so, it skips straight to `return True`
@@ -100,7 +133,9 @@ Denials are never recorded, so a declined call is prompted again on its next
 occurrence.
 
 This hook mechanism is generic — new destructive tools can opt in by adding
-an entry to `PRE_TOOL_HOOKS`, without changing `run_turn()`.
+an entry to `PRE_TOOL_HOOKS`, without changing `run_turn()`. That entry
+automatically participates in all three permission modes via
+`build_pre_tool_hooks()` — no separate per-mode registration is needed.
 
 ## Search tools
 
@@ -238,5 +273,7 @@ p.unlink()
    (`core/tools.py`) so `resolve_paths()` normalizes it.
 5. If it's destructive/irreversible, register it in `PRE_TOOL_HOOKS`
    (`ui/permissions.py`; reuse `permission_ask` or write a new hook with the
-   same `(tool_name, args, console) -> bool` signature).
+   same `(tool_name, args, console) -> bool` signature). It then
+   automatically participates in all three permission modes (approval/
+   yolo/auto) via `build_pre_tool_hooks()` — no extra per-mode wiring needed.
 6. Document it here in `docs/tools.md`.

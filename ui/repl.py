@@ -12,10 +12,13 @@ from rich.rule import Rule
 from langchain_core.messages import SystemMessage
 
 from core import SYSTEM_PROMPT, load_llm
+from .permissions import MODE_APPROVAL
 from .streaming import _ctx_state
 from .turn import run_turn
 
 SLASH_COMMANDS = ["/exit", "/quit"]
+
+_mode_state = {"mode": MODE_APPROVAL}
 
 
 def _get_toolbar() -> str:
@@ -27,6 +30,8 @@ def _get_toolbar() -> str:
     width = shutil.get_terminal_size().columns
     rule = "─" * width
     ctx_k = f"Ctx: {_ctx_state['tokens'] // 1000} k" if _ctx_state["tokens"] else "Ctx: 0 k"
+    if _mode_state["mode"] != MODE_APPROVAL:
+        ctx_k += f"  ·  {_mode_state['mode']}"
 
     matches = (
         [c for c in SLASH_COMMANDS if c.startswith(text)]
@@ -38,11 +43,18 @@ def _get_toolbar() -> str:
     return "\n".join([rule, ctx_k] + cmd_lines)
 
 
-def main():
+def main(mode: str = MODE_APPROVAL, prompt: str | None = None):
     console = Console()
+    _mode_state["mode"] = mode
     llm_with_tools = load_llm()
     initial_cwd = str(pathlib.Path.cwd())
     messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
+
+    if prompt is not None:
+        # One-shot mode: run exactly one turn and exit — no PromptSession/
+        # toolbar (both assume an interactive terminal) and no REPL loop.
+        run_turn(llm_with_tools, messages, prompt, console, initial_cwd, mode)
+        return
 
     _toolbar_style = Style.from_dict({
         "bottom-toolbar": "bg:default fg:default noreverse",
@@ -71,4 +83,4 @@ def main():
         console.print(f"[bold orange1]> {escape(user_input)}[/bold orange1]")
         console.print()
 
-        run_turn(llm_with_tools, messages, user_input, console, initial_cwd)
+        run_turn(llm_with_tools, messages, user_input, console, initial_cwd, mode)

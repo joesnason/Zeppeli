@@ -32,6 +32,20 @@ Or if you use [direnv](https://direnv.net/), `.envrc` activates the venv automat
 python3 cli.py
 ```
 
+By default, every write/delete asks for confirmation (see
+[`docs/tools.md`](docs/tools.md) for details). Two flags loosen that:
+
+- `python3 cli.py --yolo-mode` — never ask, run every tool call immediately
+- `python3 cli.py --auto-mode` — auto-approve writes/deletes inside the
+  launch directory; still ask for anything outside it
+
+(`--yolo-mode` and `--auto-mode` are mutually exclusive.)
+
+- `python3 cli.py -p "<prompt>"` (or `--prompt`) — run one turn
+  non-interactively with `<prompt>` as input, print the response, and exit
+  (skips the REPL). Combine with `--yolo-mode`/`--auto-mode` as needed —
+  handy for quickly testing a permission mode without sitting in the REPL.
+
 ```
 Ollama Chat (gemma4:26b-nvfp4)  — type 'quit' or Ctrl+C to exit
 
@@ -78,9 +92,10 @@ implementation details.
 | `core/` | AI agent/model layer — tool definitions, path resolution, Ollama loading |
 | `ui/` | User interaction layer — REPL loop, streaming/Markdown rendering, permission prompts |
 | `test_tool_call.py` | Batch test script for tool calling |
+| `test_permission_modes.py` | Automated tests for permission-mode logic — no Ollama needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
-| `docs/` | Implementation details (tool internals, etc.) |
+| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md) |
 
 ## Exit
 

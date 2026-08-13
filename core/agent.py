@@ -16,7 +16,9 @@ SYSTEM_PROMPT = """You are a helpful assistant with access to the following tool
 - delete_file(path): Delete a file. Does not delete directories.
 
 Use these tools when the user asks about files, directories, folder contents, searching within files, or writing/creating/deleting files.
-For questions unrelated to the filesystem, answer directly without using any tool."""
+For questions unrelated to the filesystem, answer directly without using any tool.
+
+Always base your response strictly on the actual tool result. If a tool result says the action was cancelled, denied, or failed (e.g. contains "CANCELLED" or "Error"), you must tell the user it did NOT happen — never claim a file was created, modified, or deleted unless the tool result confirms it succeeded."""
 
 
 def load_llm(model: str = MODEL):
