@@ -67,10 +67,10 @@ def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
 
     options = [
         ("Yes", "turn"),
-        ("Always allow (this session)", "session"),
+        ("Yes, always allow (this session)", "session"),
         ("No", "deny"),
     ]
-    state = {"idx": 2}  # default: No
+    state = {"idx": 0}  # default: Yes
 
     def get_tokens():
         tokens = []

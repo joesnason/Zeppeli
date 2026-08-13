@@ -35,7 +35,10 @@ python3 cli.py
 By default, every write/delete asks for confirmation (see
 [`docs/tools.md`](docs/tools.md) for details). Two flags loosen that:
 
-- `python3 cli.py --yolo-mode` — never ask, run every tool call immediately
+- `python3 cli.py --yolo-mode` — **EXTREMELY DANGEROUS**: never ask, run
+  every tool call immediately — the AI can overwrite or delete any file it
+  can reach with no confirmation. Only use it if you fully trust the
+  prompts you're giving it.
 - `python3 cli.py --auto-mode` — auto-approve writes/deletes inside the
   launch directory; still ask for anything outside it
 

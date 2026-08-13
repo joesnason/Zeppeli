@@ -104,11 +104,11 @@ with a dim note instead of prompting. Otherwise it renders an interactive
 prompt_toolkit menu with three options:
 
 - Prints the pending action (`write to` or `delete`) and target path.
-- Arrow keys move a `▶` selection cursor between **Yes** / **Always allow
-  (this session)** / **No** (default: **No**, i.e. `state["idx"] = 2`).
+- Arrow keys move a `▶` selection cursor between **Yes** / **Yes, always
+  allow (this session)** / **No** (default: **Yes**, i.e. `state["idx"] = 0`).
 - `Enter` confirms the highlighted option.
 - `Ctrl-C` cancels (treated as **No** / deny).
-- Choosing **Yes** or **Always allow (this session)** records an approval
+- Choosing **Yes** or **Yes, always allow (this session)** records an approval
   (turn-scoped or session-scoped respectively) before returning `True`.
   Choosing **No** returns `False` without recording anything.
 

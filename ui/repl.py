@@ -12,7 +12,7 @@ from rich.rule import Rule
 from langchain_core.messages import SystemMessage
 
 from core import SYSTEM_PROMPT, load_llm
-from .permissions import MODE_APPROVAL
+from .permissions import MODE_APPROVAL, MODE_AUTO, MODE_YOLO
 from .streaming import _ctx_state
 from .turn import run_turn
 
@@ -20,8 +20,14 @@ SLASH_COMMANDS = ["/exit", "/quit"]
 
 _mode_state = {"mode": MODE_APPROVAL}
 
+_MODE_COLORS = {
+    MODE_YOLO: "#AB4C3F",
+    MODE_AUTO: "#E1C167",
+    MODE_APPROVAL: "#007C7C",
+}
 
-def _get_toolbar() -> str:
+
+def _get_toolbar():
     from prompt_toolkit.application import get_app
     try:
         text = get_app().current_buffer.text
@@ -30,8 +36,9 @@ def _get_toolbar() -> str:
     width = shutil.get_terminal_size().columns
     rule = "─" * width
     ctx_k = f"Ctx: {_ctx_state['tokens'] // 1000} k" if _ctx_state["tokens"] else "Ctx: 0 k"
-    if _mode_state["mode"] != MODE_APPROVAL:
-        ctx_k += f"  ·  {_mode_state['mode']}"
+    mode = _mode_state["mode"]
+    color = _MODE_COLORS.get(mode, _MODE_COLORS[MODE_APPROVAL])
+    mode_label = f"{mode} mode"
 
     matches = (
         [c for c in SLASH_COMMANDS if c.startswith(text)]
@@ -40,7 +47,12 @@ def _get_toolbar() -> str:
     )
     # Pad to fixed height so toolbar never resizes (prevents blank-line artifact)
     cmd_lines = matches + [""] * (len(SLASH_COMMANDS) - len(matches))
-    return "\n".join([rule, ctx_k] + cmd_lines)
+    return [
+        ("", rule + "\n"),
+        ("", ctx_k + "  ·  "),
+        (f"fg:{color} bold", mode_label),
+        ("", "\n" + "\n".join(cmd_lines)),
+    ]
 
 
 def main(mode: str = MODE_APPROVAL, prompt: str | None = None):

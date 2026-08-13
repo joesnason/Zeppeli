@@ -1,7 +1,8 @@
 """Entry point: `python3 cli.py` starts the interactive REPL (see ui/repl.py).
 
 Permission mode is chosen once at launch via CLI flag (default: approval):
-  --yolo-mode   skip all permission prompts entirely
+  --yolo-mode   EXTREMELY DANGEROUS — skip all permission prompts entirely;
+                the AI can write/delete any file it can reach, unconfirmed
   --auto-mode   auto-approve writes/deletes inside the launch directory;
                 prompt for anything outside it
 
@@ -19,7 +20,11 @@ def _parse_args(argv: list[str] | None = None):
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--yolo-mode", action="store_true",
-        help="Skip all permission prompts for write_file/delete_file calls.",
+        help="EXTREMELY DANGEROUS: skip all permission prompts for "
+             "write_file/delete_file calls. The AI can overwrite or delete "
+             "any file it can reach, with no confirmation and no way to "
+             "stop it beforehand. Use only if you fully trust the prompts "
+             "you give it.",
     )
     group.add_argument(
         "--auto-mode", action="store_true",

@@ -17,10 +17,10 @@ python3 cli.py -p "Create a file called scratch_test.txt containing the text hel
 ```
 
 Expect: the interactive arrow-key menu appears (`AI wants to write to:
-.../scratch_test.txt`, options **Yes** / **Always allow (this session)** /
-**No**, default **No**). Selecting **Yes** writes the file and the AI
-reports success. The process exits to the shell right after — no REPL
-prompt appears.
+.../scratch_test.txt`, options **Yes** / **Yes, always allow (this
+session)** / **No**, default **Yes**). Pressing Enter on the default writes
+the file and the AI reports success. The process exits to the shell right
+after — no REPL prompt appears.
 
 ## 2. `--yolo-mode` — never prompts
 
