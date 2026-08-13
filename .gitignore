@@ -19,6 +19,7 @@ build/
 !.env.example
 
 # direnv
+.envrc
 .envrc.local
 
 # Claude Code
