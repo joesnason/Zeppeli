@@ -13,7 +13,7 @@ from rich.rule import Rule
 from langchain_core.messages import SystemMessage
 
 from core import MODEL as DEFAULT_MODEL, SYSTEM_PROMPT, load_llm
-from .permissions import MODE_APPROVAL, MODE_AUTO, MODE_YOLO
+from .permissions import MODE_APPROVAL, MODE_AUTO, MODE_YOLO, confirm_auto_mode_trust
 from .streaming import _ctx_state
 from .turn import run_turn
 
@@ -88,6 +88,16 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
     console = Console()
     _mode_state["mode"] = mode
     _model_state["name"] = model or DEFAULT_MODEL
+
+    if mode == MODE_AUTO and prompt is None:
+        # Interactive REPL launched with --auto-mode: gate entry on an
+        # explicit one-time trust confirmation before loading the model or
+        # auto-approving anything. Not shown for -p (headless/scripted) or
+        # for the Shift+Tab live toggle into auto mode mid-session.
+        if not confirm_auto_mode_trust(console):
+            console.print("Bye!")
+            return
+
     llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key)
     initial_cwd = str(pathlib.Path.cwd())
     messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]

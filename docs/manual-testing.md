@@ -39,8 +39,12 @@ an `N/M passed` summary:
 - `cli.py`'s argparse: `--yolo-mode --auto-mode` together raises
   `SystemExit(2)`; `-p`/`--prompt` parse correctly (short form, long form,
   default `None`, and combined with a mode flag)
+- `confirm_auto_mode_trust()`'s index → bool mapping (Yes/No/Ctrl+C via a
+  monkeypatched `_arrow_menu`) and `ui.repl.main()`'s trust gate — declining
+  in interactive auto mode skips `load_llm()` entirely, and one-shot `-p`
+  mode never calls `confirm_auto_mode_trust()` at all
 
-Expect `14/14 passed`, exit code `0`. A failure here means the permission
+Expect `19/19 passed`, exit code `0`. A failure here means the permission
 dispatch logic itself broke — fix that before bothering with the manual
 checklist below.
 
@@ -82,7 +86,8 @@ process exits.
 python3 cli.py --auto-mode -p "Create a file called scratch_test.txt containing the text hello"
 ```
 
-Expect: a dim note `✓ auto-approved (auto-mode): write_file →
+Expect: **no trust prompt** (that's `-p`, which stays fully non-interactive
+— see #7 below), a dim note `✓ auto-approved (auto-mode): write_file →
 .../scratch_test.txt`, no prompt, file written.
 
 ### 4. `--auto-mode` — falls back to a prompt outside cwd
@@ -120,7 +125,36 @@ picked up the toggled mode. Press Shift+Tab again: flips back to `Manual
 mode` (teal). Now launch with `--yolo-mode` and press Shift+Tab — the label
 stays `yolo mode`; the toggle is a no-op there.
 
+Also note that the Shift+Tab toggle itself never shows the trust prompt
+below — that's launch-time-only.
+
+### 7. `--auto-mode` (interactive) — trust prompt gates entry
+
+```bash
+python3 cli.py --auto-mode
+```
+
+Expect, before anything else (no model-loading delay, no toolbar yet):
+
+```
+Zeppeli requires permission to read, edit, and execute files here.
+
+> Yes, I trust this folder
+  No, exit
+```
+
+Press Enter on the default (**Yes, I trust this folder**): proceeds
+normally into the REPL, toolbar shows `auto mode`. Re-run and select **No,
+exit** (or Ctrl+C): prints `Bye!` and returns straight to the shell — no
+model load, no REPL. Re-run `python3 cli.py` (no `--auto-mode`): confirm the
+prompt does **not** appear — Manual mode starts straight into the REPL.
+
 ### Also worth re-checking after any change here
+
+- After touching `ui/permissions.py`'s `_arrow_menu` (shared by
+  `permission_ask` and `confirm_auto_mode_trust`), re-verify #1 above still
+  behaves identically — same three options, same default **Yes**, same
+  Ctrl+C-as-deny.
 
 - The cancellation-message fix: in approval or auto-mode, choose **No** on a
   write/delete outside cwd and confirm the AI's final reply says the action

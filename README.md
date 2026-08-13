@@ -43,7 +43,11 @@ By default, every write/delete asks for confirmation (see
   can reach with no confirmation. Only use it if you fully trust the
   prompts you're giving it.
 - `python3 cli.py --auto-mode` — auto-approve writes/deletes inside the
-  launch directory; still ask for anything outside it
+  launch directory; still ask for anything outside it. Launching this way
+  interactively first asks you to confirm you trust the folder (**Yes, I
+  trust this folder** / **No, exit**) before doing anything else; declining
+  exits immediately. (This one-time check doesn't apply to `-p ...
+  --auto-mode`, which stays fully non-interactive.)
 
 (`--yolo-mode` and `--auto-mode` are mutually exclusive.)
 

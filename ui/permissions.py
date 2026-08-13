@@ -48,33 +48,20 @@ def reset_turn_approvals() -> None:
     _turn_approved.clear()
 
 
-def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
-    path = args.get("path", "")
-
-    scope = _approved_scope(tool_name, args)
-    if scope is not None:
-        console.print(f"[dim]  ✓ auto-approved ({scope}): {tool_name} → {path}[/dim]")
-        return True
-
+def _arrow_menu(options: list[str], default_idx: int = 0) -> int | None:
+    """Render an inline arrow-key menu (↑↓ + Enter) and return the chosen
+    index, or None if the user cancelled (Ctrl+C)."""
     from prompt_toolkit.application import Application
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.layout import Layout
     from prompt_toolkit.layout.containers import Window
     from prompt_toolkit.layout.controls import FormattedTextControl
 
-    action = "delete" if tool_name == "delete_file" else "write to"
-    console.print(f"[yellow]  AI wants to {action}:[/yellow] [bold]{path}[/bold]")
-
-    options = [
-        ("Yes", "turn"),
-        ("Yes, always allow (this session)", "session"),
-        ("No", "deny"),
-    ]
-    state = {"idx": 0}  # default: Yes
+    state = {"idx": default_idx}
 
     def get_tokens():
         tokens = []
-        for i, (label, _) in enumerate(options):
+        for i, label in enumerate(options):
             if i == state["idx"]:
                 tokens += [("", f" ▶  {label}"), ("", "\n")]
             else:
@@ -93,11 +80,11 @@ def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
 
     @kb.add("enter")
     def confirm(event):
-        event.app.exit(result=options[state["idx"]][1])
+        event.app.exit(result=state["idx"])
 
     @kb.add("c-c")
     def cancel(event):
-        event.app.exit(result="deny")
+        event.app.exit(result=None)
 
     layout = Layout(Window(FormattedTextControl(get_tokens, focusable=True)))
     app = Application(
@@ -106,12 +93,40 @@ def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
         full_screen=False,
         mouse_support=False,
     )
-    choice = app.run()
+    return app.run()
+
+
+def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
+    path = args.get("path", "")
+
+    scope = _approved_scope(tool_name, args)
+    if scope is not None:
+        console.print(f"[dim]  ✓ auto-approved ({scope}): {tool_name} → {path}[/dim]")
+        return True
+
+    action = "delete" if tool_name == "delete_file" else "write to"
+    console.print(f"[yellow]  AI wants to {action}:[/yellow] [bold]{path}[/bold]")
+
+    scopes = ["turn", "session", "deny"]
+    idx = _arrow_menu(["Yes", "Yes, always allow (this session)", "No"], default_idx=0)
+    choice = scopes[idx] if idx is not None else "deny"
 
     if choice == "deny":
         return False
     _record_approval(tool_name, args, choice)
     return True
+
+
+def confirm_auto_mode_trust(console: Console) -> bool:
+    """Shown once, before the interactive REPL enters auto mode. Returns
+    True (proceed) for "Yes, I trust this folder", False (exit) for
+    "No, exit" or Ctrl+C."""
+    console.print(
+        "[yellow]  Zeppeli requires permission to read, edit, and execute "
+        "files here.[/yellow]"
+    )
+    idx = _arrow_menu(["Yes, I trust this folder", "No, exit"], default_idx=0)
+    return idx == 0
 
 
 PRE_TOOL_HOOKS: dict[str, callable] = {

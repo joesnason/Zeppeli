@@ -8,6 +8,9 @@ Covers:
 - _is_within_cwd() path-containment edge cases
 - the auto-mode hook's inside/outside-cwd branching
 - cli.py's argparse: --yolo-mode/--auto-mode mutual exclusivity, -p/--prompt
+- confirm_auto_mode_trust()'s _arrow_menu-index -> bool mapping
+- ui.repl.main()'s auto-mode trust gate: declining skips load_llm(), and
+  one-shot -p mode never triggers the trust check at all
 """
 
 import sys
@@ -18,6 +21,7 @@ from rich.console import Console
 
 import cli
 import ui.permissions as permissions
+import ui.repl as repl
 from ui.permissions import (
     MODE_APPROVAL,
     MODE_AUTO,
@@ -25,10 +29,16 @@ from ui.permissions import (
     _is_within_cwd,
     _make_auto_hook,
     build_pre_tool_hooks,
+    confirm_auto_mode_trust,
 )
 
-# Captured before any test can monkeypatch permissions.permission_ask.
+# Captured before any test can monkeypatch permissions.permission_ask /
+# _arrow_menu, or ui.repl's confirm_auto_mode_trust / load_llm / run_turn.
 _ORIGINAL_PERMISSION_ASK = permissions.permission_ask
+_ORIGINAL_ARROW_MENU = permissions._arrow_menu
+_ORIGINAL_CONFIRM_AUTO_MODE_TRUST = repl.confirm_auto_mode_trust
+_ORIGINAL_REPL_LOAD_LLM = repl.load_llm
+_ORIGINAL_REPL_RUN_TURN = repl.run_turn
 
 _console = Console()
 
@@ -136,6 +146,58 @@ def test_cli_prompt_combines_with_mode_flags():
     assert ns.prompt == "hi"
 
 
+def test_confirm_auto_mode_trust_yes():
+    permissions._arrow_menu = lambda *a, **k: 0  # "Yes, I trust this folder"
+    try:
+        assert confirm_auto_mode_trust(_console) is True
+    finally:
+        permissions._arrow_menu = _ORIGINAL_ARROW_MENU
+
+
+def test_confirm_auto_mode_trust_no():
+    permissions._arrow_menu = lambda *a, **k: 1  # "No, exit"
+    try:
+        assert confirm_auto_mode_trust(_console) is False
+    finally:
+        permissions._arrow_menu = _ORIGINAL_ARROW_MENU
+
+
+def test_confirm_auto_mode_trust_cancelled():
+    permissions._arrow_menu = lambda *a, **k: None  # Ctrl+C
+    try:
+        assert confirm_auto_mode_trust(_console) is False
+    finally:
+        permissions._arrow_menu = _ORIGINAL_ARROW_MENU
+
+
+def test_main_auto_mode_declined_skips_llm_load():
+    def _spy(*a, **k):
+        raise AssertionError("load_llm should not be called when trust is declined")
+
+    repl.confirm_auto_mode_trust = lambda console: False
+    repl.load_llm = _spy
+    try:
+        repl.main(mode=MODE_AUTO, prompt=None)  # should return early, no exception
+    finally:
+        repl.confirm_auto_mode_trust = _ORIGINAL_CONFIRM_AUTO_MODE_TRUST
+        repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
+
+
+def test_main_prompt_mode_skips_trust_check():
+    def _spy(console):
+        raise AssertionError("confirm_auto_mode_trust should not be called in -p mode")
+
+    repl.confirm_auto_mode_trust = _spy
+    repl.load_llm = lambda **k: object()
+    repl.run_turn = lambda *a, **k: None
+    try:
+        repl.main(mode=MODE_AUTO, prompt="hi")
+    finally:
+        repl.confirm_auto_mode_trust = _ORIGINAL_CONFIRM_AUTO_MODE_TRUST
+        repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
+        repl.run_turn = _ORIGINAL_REPL_RUN_TURN
+
+
 TESTS = [
     test_build_pre_tool_hooks_yolo,
     test_build_pre_tool_hooks_approval_shape,
@@ -151,6 +213,11 @@ TESTS = [
     test_cli_prompt_flag_short_and_long,
     test_cli_prompt_default_none,
     test_cli_prompt_combines_with_mode_flags,
+    test_confirm_auto_mode_trust_yes,
+    test_confirm_auto_mode_trust_no,
+    test_confirm_auto_mode_trust_cancelled,
+    test_main_auto_mode_declined_skips_llm_load,
+    test_main_prompt_mode_skips_trust_check,
 ]
 
 
