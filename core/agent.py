@@ -21,6 +21,20 @@ For questions unrelated to the filesystem, answer directly without using any too
 Always base your response strictly on the actual tool result. If a tool result says the action was cancelled, denied, or failed (e.g. contains "CANCELLED" or "Error"), you must tell the user it did NOT happen — never claim a file was created, modified, or deleted unless the tool result confirms it succeeded."""
 
 
-def load_llm(model: str = MODEL):
-    """Load the Ollama chat model and bind it to the full tool set."""
-    return ChatOllama(model=model).bind_tools(TOOLS)
+def load_llm(model: str | None = None, base_url: str | None = None, api_key: str | None = None):
+    """Load a chat model and bind it to the full tool set.
+
+    Local Ollama is the default. If base_url is given, routes to a cloud/
+    self-hosted model via litellm instead — model is required in that case
+    (validated upstream in cli.py, not here). Flag/env-var resolution for
+    all three params also happens upstream in cli.py; this stays a pure
+    function of its three params.
+    """
+    if base_url:
+        from langchain_litellm import ChatLiteLLM  # lazy: keep litellm optional
+
+        kwargs = {"model": model, "api_base": base_url}
+        if api_key:
+            kwargs["api_key"] = api_key
+        return ChatLiteLLM(**kwargs).bind_tools(TOOLS)
+    return ChatOllama(model=model or MODEL).bind_tools(TOOLS)

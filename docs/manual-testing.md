@@ -7,6 +7,11 @@ catches logic regressions — then walk the manual checklist for end-to-end
 confidence, especially after touching `ui/permissions.py`, `ui/turn.py`, or
 `cli.py`'s argument parsing.
 
+(For `--base-url`/`--model`/`--api-key` cloud-model config and
+`core.agent.load_llm()`'s backend branching — a separate concern from
+permission modes — see `test_model_config.py` and
+[`docs/models.md`](models.md) instead.)
+
 ## Automated: `test_permission_modes.py`
 
 ```bash

@@ -55,10 +55,11 @@ def _get_toolbar():
     ]
 
 
-def main(mode: str = MODE_APPROVAL, prompt: str | None = None):
+def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
+         model: str | None = None, base_url: str | None = None, api_key: str | None = None):
     console = Console()
     _mode_state["mode"] = mode
-    llm_with_tools = load_llm()
+    llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key)
     initial_cwd = str(pathlib.Path.cwd())
     messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
 

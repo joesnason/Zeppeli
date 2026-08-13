@@ -11,10 +11,13 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 
 ## Requirements
 
-- [Ollama](https://ollama.com) running locally
+- [Ollama](https://ollama.com) running locally (unless you're only using a
+  cloud model via `--base-url`, see below)
 - The model pulled: `ollama pull gemma4:26b-nvfp4`
 - Python 3.12+
 - Node.js 22+ (for `glob_files` tool)
+- `langchain-litellm`/`litellm` install by default via `requirements.txt`,
+  but are only actually used when `--base-url`/`LITELLM_BASE_URL` is set
 
 ## Setup
 
@@ -48,6 +51,14 @@ By default, every write/delete asks for confirmation (see
   non-interactively with `<prompt>` as input, print the response, and exit
   (skips the REPL). Combine with `--yolo-mode`/`--auto-mode` as needed —
   handy for quickly testing a permission mode without sitting in the REPL.
+- `python3 cli.py --model <name>` — override the local Ollama model tag
+  (default set in `core/agent.py`) without editing the file.
+- `python3 cli.py --base-url <url> --model <name> [--api-key <key>]` — use
+  a cloud/self-hosted model via [litellm](https://docs.litellm.ai) instead
+  of local Ollama. `--model` is required with `--base-url` and needs
+  litellm's provider prefix, e.g. `openai/gpt-4o-mini`. Each of the three
+  can also be set via `LITELLM_BASE_URL`/`LITELLM_MODEL`/`LITELLM_API_KEY`
+  env vars (flag takes precedence). See [`docs/models.md`](docs/models.md).
 
 ```
 Ollama Chat (gemma4:26b-nvfp4)  — type 'quit' or Ctrl+C to exit
@@ -96,9 +107,10 @@ implementation details.
 | `ui/` | User interaction layer — REPL loop, streaming/Markdown rendering, permission prompts |
 | `test_tool_call.py` | Batch test script for tool calling |
 | `test_permission_modes.py` | Automated tests for permission-mode logic — no Ollama needed |
+| `test_model_config.py` | Automated tests for model/cloud config resolution — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
-| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md) |
+| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md) and [`docs/models.md`](docs/models.md) |
 
 ## Exit
 
