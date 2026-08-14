@@ -86,6 +86,16 @@ def _arrow_menu(options: list[str], default_idx: int = 0) -> int | None:
     def cancel(event):
         event.app.exit(result=None)
 
+    @kb.add("escape")
+    def cancel_esc(event):
+        # By convention "No" (or "No, exit") is always the last option in
+        # every menu built by this helper. Move the cursor there so the
+        # final rendered frame visibly shows the selection landing on "No"
+        # before exiting, rather than just vanishing silently.
+        no_idx = len(options) - 1
+        state["idx"] = no_idx
+        event.app.exit(result=no_idx)
+
     layout = Layout(Window(FormattedTextControl(get_tokens, focusable=True)))
     app = Application(
         layout=layout,

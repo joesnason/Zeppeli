@@ -107,7 +107,11 @@ prompt_toolkit menu with three options:
 - Arrow keys move a `▶` selection cursor between **Yes** / **Yes, always
   allow (this session)** / **No** (default: **Yes**, i.e. `state["idx"] = 0`).
 - `Enter` confirms the highlighted option.
-- `Ctrl-C` cancels (treated as **No** / deny).
+- `Esc` moves the cursor to **No** and confirms it — same effect as
+  arrowing down to **No** and pressing `Enter`, so the final frame visibly
+  shows the selection landing on **No** before the menu closes.
+- `Ctrl-C` also cancels (exits with no selection shown, treated as **No** /
+  deny).
 - Choosing **Yes** or **Yes, always allow (this session)** records an approval
   (turn-scoped or session-scoped respectively) before returning `True`.
   Choosing **No** returns `False` without recording anything.
