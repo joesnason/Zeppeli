@@ -12,10 +12,13 @@ Covers:
 - ui.repl.main()'s auto-mode trust gate: declining skips load_llm(), and
   one-shot -p mode never triggers the trust check at all
 - ui.repl._clear_input: Esc clears the live input buffer, no-ops if empty
+- ui.repl main()'s per-process session ID: uniqueness, and its rendering in
+  _get_toolbar()
 """
 
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -216,6 +219,35 @@ def test_clear_input_esc_noop_on_empty_buffer():
     assert buffer.text == ""
 
 
+def test_main_seeds_unique_session_id():
+    repl.load_llm = lambda **k: object()
+    repl.run_turn = lambda *a, **k: None
+    try:
+        repl.main(mode=MODE_APPROVAL, prompt="hi")
+        first_id = repl._session_state["id"]
+        repl.main(mode=MODE_APPROVAL, prompt="hi")
+        second_id = repl._session_state["id"]
+    finally:
+        repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
+        repl.run_turn = _ORIGINAL_REPL_RUN_TURN
+
+    uuid.UUID(first_id)  # raises ValueError if not a valid UUID string
+    uuid.UUID(second_id)
+    assert first_id != second_id
+
+
+def test_get_toolbar_includes_session_id_line():
+    fixed_id = str(uuid.uuid4())
+    repl._session_state["id"] = fixed_id
+    tokens = repl._get_toolbar()
+    text = "".join(t for _, t in tokens)
+
+    assert f"Session ID: {fixed_id}" in text
+    # 3 + len(SLASH_COMMANDS) *lines* means 2 + len(SLASH_COMMANDS) newline
+    # characters joining them (N lines need N-1 separators).
+    assert text.count("\n") == 2 + len(repl.SLASH_COMMANDS)
+
+
 TESTS = [
     test_build_pre_tool_hooks_yolo,
     test_build_pre_tool_hooks_approval_shape,
@@ -238,6 +270,8 @@ TESTS = [
     test_main_prompt_mode_skips_trust_check,
     test_clear_input_esc_empties_nonempty_buffer,
     test_clear_input_esc_noop_on_empty_buffer,
+    test_main_seeds_unique_session_id,
+    test_get_toolbar_includes_session_id_line,
 ]
 
 

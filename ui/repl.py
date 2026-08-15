@@ -3,6 +3,7 @@
 import pathlib
 import shutil
 import sys
+import uuid
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
@@ -21,6 +22,7 @@ SLASH_COMMANDS = ["/exit", "/quit"]
 
 _mode_state = {"mode": MODE_APPROVAL}
 _model_state = {"name": ""}
+_session_state = {"id": ""}
 
 _MODE_COLORS = {
     MODE_YOLO: "#AB4C3F",
@@ -78,7 +80,7 @@ def _get_toolbar():
         else []
     )
     # Pad to fixed height so toolbar never resizes (prevents blank-line artifact).
-    # Fixed at 3 + len(SLASH_COMMANDS) lines: rule, model/mode, ctx, command hints.
+    # Fixed at 3 + len(SLASH_COMMANDS) lines: rule, model/mode, session/ctx, command hints.
     cmd_lines = matches + [""] * (len(SLASH_COMMANDS) - len(matches))
     return [
         ("", rule + "\n"),
@@ -86,6 +88,8 @@ def _get_toolbar():
         ("", "  |  "),
         (f"fg:{color} bold", mode_label),
         ("", "\n"),
+        (f"fg:{model_color} bold", f"Session ID: {_session_state['id']}"),
+        ("", "  |  "),
         ("", ctx_k),
         ("", "\n" + "\n".join(cmd_lines)),
     ]
@@ -96,6 +100,7 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
     console = Console()
     _mode_state["mode"] = mode
     _model_state["name"] = model or DEFAULT_MODEL
+    _session_state["id"] = str(uuid.uuid4())
 
     if mode == MODE_AUTO and prompt is None:
         # Interactive REPL launched with --auto-mode: gate entry on an
