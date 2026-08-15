@@ -127,11 +127,11 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
     session = PromptSession(bottom_toolbar=_get_toolbar, style=_toolbar_style, key_bindings=_kb)
     # prompt_toolkit's default timeoutlen (1.0s) waits after a lone Esc to
     # see if it's actually the start of an Alt-combo sequence (Alt+key is
-    # sent as ESC + key on a raw terminal, and the default emacs bindings
-    # include several). That wait makes _clear_input feel laggy. Shorten it
-    # (mirrors Vim's ttimeoutlen fix) so Esc-to-clear reads as instant while
-    # still leaving enough window for real Alt-combos to resolve correctly.
-    session.app.timeoutlen = 0.1
+    # sent as ESC + key on a raw terminal; prompt_toolkit's built-in emacs
+    # bindings register several, e.g. Alt+F/Alt+B word nav, even though this
+    # app's own key_bindings never use one). We don't rely on any of those,
+    # so there's nothing worth waiting for — flush immediately.
+    session.app.timeoutlen = 0
 
     while True:
         console.print(Rule())

@@ -163,14 +163,15 @@ python3 cli.py
 ```
 
 Expect: type a partial message (no Enter), e.g. `hello world` — press `Esc`
-and the line goes fully empty, cursor back at the start, **with no
-perceptible delay** (the session's `app.timeoutlen` is lowered to 0.1s in
+and the line goes fully empty, cursor back at the start, **instantly, no
+perceptible delay** (the session's `app.timeoutlen` is set to `0` in
 `ui/repl.py` specifically so this doesn't lag behind prompt_toolkit's
-default 1s Esc/Alt-combo disambiguation wait — if this regresses, check
-that line first). Try mid-typing a `/` command too — the slash-command hint
-lines below the toolbar disappear along with the cleared text. Press `Esc`
-again on the now-empty line: nothing happens, no error, no crash. Confirm
-Shift+Tab mode toggling still
+default 1s Esc/Alt-combo disambiguation wait — this app doesn't use any
+Alt-combo bindings itself, so there's nothing to wait for; if this
+regresses, check that line first). Try mid-typing a `/` command too — the
+slash-command hint lines below the toolbar disappear along with the
+cleared text. Press `Esc` again on the now-empty line: nothing happens, no
+error, no crash. Confirm Shift+Tab mode toggling still
 works unaffected afterward.
 
 ### Also worth re-checking after any change here
