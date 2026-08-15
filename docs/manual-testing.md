@@ -156,6 +156,23 @@ identically — `Bye!`, no model load, no REPL. Re-run `python3 cli.py` (no
 `--auto-mode`): confirm the prompt does **not** appear — Manual mode starts
 straight into the REPL.
 
+### 8. Esc clears the input line mid-typing
+
+```bash
+python3 cli.py
+```
+
+Expect: type a partial message (no Enter), e.g. `hello world` — press `Esc`
+and the line goes fully empty, cursor back at the start, **with no
+perceptible delay** (the session's `app.timeoutlen` is lowered to 0.1s in
+`ui/repl.py` specifically so this doesn't lag behind prompt_toolkit's
+default 1s Esc/Alt-combo disambiguation wait — if this regresses, check
+that line first). Try mid-typing a `/` command too — the slash-command hint
+lines below the toolbar disappear along with the cleared text. Press `Esc`
+again on the now-empty line: nothing happens, no error, no crash. Confirm
+Shift+Tab mode toggling still
+works unaffected afterward.
+
 ### Also worth re-checking after any change here
 
 - After touching `ui/permissions.py`'s `_arrow_menu` (shared by

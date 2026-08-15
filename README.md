@@ -54,7 +54,8 @@ By default, every write/delete asks for confirmation (see
 The bottom toolbar shows the loaded model and current permission mode
 (`Model: <name>  |  Manual mode` by default). Press **Shift+Tab** at any
 time in the REPL to toggle live between Manual and Auto mode without
-restarting (no effect if launched with `--yolo-mode`).
+restarting (no effect if launched with `--yolo-mode`). Press **Esc** while
+typing at the input prompt to clear the line back to empty.
 
 - `python3 cli.py -p "<prompt>"` (or `--prompt`) — run one turn
   non-interactively with `<prompt>` as input, print the response, and exit

@@ -11,12 +11,15 @@ Covers:
 - confirm_auto_mode_trust()'s _arrow_menu-index -> bool mapping
 - ui.repl.main()'s auto-mode trust gate: declining skips load_llm(), and
   one-shot -p mode never triggers the trust check at all
+- ui.repl._clear_input: Esc clears the live input buffer, no-ops if empty
 """
 
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
+from prompt_toolkit.buffer import Buffer
 from rich.console import Console
 
 import cli
@@ -198,6 +201,21 @@ def test_main_prompt_mode_skips_trust_check():
         repl.run_turn = _ORIGINAL_REPL_RUN_TURN
 
 
+def test_clear_input_esc_empties_nonempty_buffer():
+    buffer = Buffer()
+    buffer.text = "hello world"
+    event = SimpleNamespace(app=SimpleNamespace(current_buffer=buffer))
+    repl._clear_input(event)
+    assert buffer.text == ""
+
+
+def test_clear_input_esc_noop_on_empty_buffer():
+    buffer = Buffer()
+    event = SimpleNamespace(app=SimpleNamespace(current_buffer=buffer))
+    repl._clear_input(event)  # should not raise
+    assert buffer.text == ""
+
+
 TESTS = [
     test_build_pre_tool_hooks_yolo,
     test_build_pre_tool_hooks_approval_shape,
@@ -218,6 +236,8 @@ TESTS = [
     test_confirm_auto_mode_trust_cancelled,
     test_main_auto_mode_declined_skips_llm_load,
     test_main_prompt_mode_skips_trust_check,
+    test_clear_input_esc_empties_nonempty_buffer,
+    test_clear_input_esc_noop_on_empty_buffer,
 ]
 
 

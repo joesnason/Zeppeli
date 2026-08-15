@@ -46,8 +46,16 @@ def _toggle_mode(event):
     event.app.invalidate()
 
 
+def _clear_input(event):
+    """Esc: clear the input line back to empty. No-op if already empty."""
+    buffer = event.app.current_buffer
+    if buffer.text:
+        buffer.reset()
+
+
 _kb = KeyBindings()
 _kb.add("s-tab")(_toggle_mode)
+_kb.add("escape")(_clear_input)
 
 
 def _get_toolbar():
@@ -112,6 +120,13 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
         "bottom-toolbar": "bg:default fg:default noreverse",
     })
     session = PromptSession(bottom_toolbar=_get_toolbar, style=_toolbar_style, key_bindings=_kb)
+    # prompt_toolkit's default timeoutlen (1.0s) waits after a lone Esc to
+    # see if it's actually the start of an Alt-combo sequence (Alt+key is
+    # sent as ESC + key on a raw terminal, and the default emacs bindings
+    # include several). That wait makes _clear_input feel laggy. Shorten it
+    # (mirrors Vim's ttimeoutlen fix) so Esc-to-clear reads as instant while
+    # still leaving enough window for real Alt-combos to resolve correctly.
+    session.app.timeoutlen = 0.1
 
     while True:
         console.print(Rule())
