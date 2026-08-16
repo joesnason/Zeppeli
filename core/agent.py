@@ -38,3 +38,27 @@ def load_llm(model: str | None = None, base_url: str | None = None, api_key: str
             kwargs["api_key"] = api_key
         return ChatLiteLLM(**kwargs).bind_tools(TOOLS)
     return ChatOllama(model=model or MODEL).bind_tools(TOOLS)
+
+
+def get_context_window(model: str | None = None) -> int | None:
+    """Look up a local-Ollama model's context window (max tokens) via
+    ollama.show(). Returns None on any failure (Ollama unreachable, unknown
+    model, unexpected response shape) — never raises. Not meaningful for
+    cloud/litellm models; callers should only invoke this when base_url is
+    not set.
+    """
+    import ollama  # lazy: mirrors load_llm()'s own litellm lazy-import
+
+    try:
+        info = ollama.show(model or MODEL)
+    except Exception:
+        return None
+
+    modelinfo = info.modelinfo or {}
+    for key, value in modelinfo.items():
+        if key.endswith(".context_length"):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None

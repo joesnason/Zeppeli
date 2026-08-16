@@ -174,6 +174,23 @@ cleared text. Press `Esc` again on the now-empty line: nothing happens, no
 error, no crash. Confirm Shift+Tab mode toggling still
 works unaffected afterward.
 
+### 9. Toolbar shows the model's context window
+
+```bash
+python3 cli.py
+```
+
+Expect: the toolbar's third line shows `Session ID: … | Ctx: 0 k / yy k`,
+where `yy` is the loaded model's actual context window — cross-check
+against `ollama show <model>`'s own reported context length (or `python3
+-c "import ollama; print(ollama.show('<model>').modelinfo)"` and look for
+the `*.context_length` key). Send a message and confirm the `Ctx:` number
+before the `/` updates with usage while the `/ yy k` window stays fixed.
+
+Then run `python3 cli.py --base-url <url> --model <name>` (a cloud/litellm
+model) and confirm the toolbar shows plain `Ctx: xx k` with **no** `/ yy k`
+suffix — there's no equivalent lookup for a non-Ollama backend.
+
 ### Also worth re-checking after any change here
 
 - After touching `ui/permissions.py`'s `_arrow_menu` (shared by

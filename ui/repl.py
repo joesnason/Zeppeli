@@ -13,7 +13,7 @@ from rich.markup import escape
 from rich.rule import Rule
 from langchain_core.messages import SystemMessage
 
-from core import MODEL as DEFAULT_MODEL, SYSTEM_PROMPT, load_llm
+from core import MODEL as DEFAULT_MODEL, SYSTEM_PROMPT, load_llm, get_context_window
 from .permissions import MODE_APPROVAL, MODE_AUTO, MODE_YOLO, confirm_auto_mode_trust
 from .streaming import _ctx_state
 from .turn import run_turn
@@ -23,6 +23,7 @@ SLASH_COMMANDS = ["/exit", "/quit"]
 _mode_state = {"mode": MODE_APPROVAL}
 _model_state = {"name": ""}
 _session_state = {"id": ""}
+_ctx_limit_state = {"tokens": None}
 
 _MODE_COLORS = {
     MODE_YOLO: "#AB4C3F",
@@ -69,6 +70,8 @@ def _get_toolbar():
     width = shutil.get_terminal_size().columns
     rule = "─" * width
     ctx_k = f"Ctx: {_ctx_state['tokens'] // 1000} k" if _ctx_state["tokens"] else "Ctx: 0 k"
+    if _ctx_limit_state["tokens"]:
+        ctx_k += f" / {_ctx_limit_state['tokens'] // 1000} k"
     mode = _mode_state["mode"]
     color = _MODE_COLORS.get(mode, _MODE_COLORS[MODE_APPROVAL])
     mode_label = _MODE_LABELS.get(mode, f"{mode} mode")
@@ -120,6 +123,12 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
         # toolbar (both assume an interactive terminal) and no REPL loop.
         run_turn(llm_with_tools, messages, prompt, console, initial_cwd, mode)
         return
+
+    if not base_url:
+        # Local Ollama only — cloud/litellm models have no equivalent
+        # lookup. Fetched once here (not per turn, not per toolbar
+        # re-render) since it's static for the life of the process.
+        _ctx_limit_state["tokens"] = get_context_window(model)
 
     _toolbar_style = Style.from_dict({
         "bottom-toolbar": "bg:default fg:default noreverse",

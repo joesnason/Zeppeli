@@ -130,6 +130,52 @@ If a cloud backend doesn't populate `usage_metadata` on streamed chunks
 (see the caveat above), the toolbar's `Ctx: xx k` counter simply stays at
 its last known value instead of updating — no crash, no code change needed.
 
+## Context window lookup and the toolbar's `/ yy k` suffix
+
+`core/agent.py`'s `get_context_window(model)` appends a `/ yy k` suffix to
+the toolbar's `Ctx: xx k` line, showing the loaded model's context window
+(max tokens) alongside current usage. It uses the official `ollama` PyPI
+package (`ollama.show(model)` → Ollama's `/api/show`), **not**
+`langchain_ollama`/`ChatOllama` — `ChatOllama` doesn't expose this
+metadata through its own interface; only the raw `/api/show` response
+carries it, via a `modelinfo` dict (aliased from the JSON `model_info`
+field). Both target the same Ollama host (`OLLAMA_HOST` env var or
+localhost default) that `ChatOllama` implicitly uses, but they're separate
+packages and separate calls.
+
+`modelinfo` has no fixed field name for the context window — Ollama emits a
+family-prefixed key instead (`"llama.context_length"`,
+`"gemma3.context_length"`, etc., depending on the model's architecture), so
+`get_context_window()` scans for the first key ending in `.context_length`
+rather than indexing a known key:
+
+```python
+modelinfo = info.modelinfo or {}
+for key, value in modelinfo.items():
+    if key.endswith(".context_length"):
+        return int(value)
+```
+
+This is **local-Ollama-only** — cloud/self-hosted models loaded via
+`--base-url` have no equivalent (`load_llm()`'s litellm branch isn't an
+Ollama server), so `ui/repl.py`'s `main()` only calls
+`get_context_window()` when `base_url` is falsy. It's fetched exactly
+**once** per process, right before the interactive `PromptSession` is
+created — not per turn, not per toolbar re-render (the toolbar callback
+only reads the cached result) — and not at all in one-shot `-p` mode, since
+no toolbar exists there to show it. Any failure (Ollama unreachable,
+unknown model tag, unexpected response shape) makes the function return
+`None` rather than raise; the toolbar then just omits the suffix.
+
+Covered by `test_model_config.py` with a faked `ollama` module (no live
+Ollama dependency) for the key-matching and error-handling logic. **Not**
+covered automatically: whether Ollama's real `/api/show` response for a
+model you actually run still follows the `<family>.context_length` key
+convention assumed here — verify manually against a live Ollama instance
+(`ollama show <model>` or `python3 -c "import ollama;
+print(ollama.show('<model>').modelinfo)"`) before relying on the toolbar
+number, similar in spirit to the litellm caveat above.
+
 ## Testing
 
 `test_model_config.py` covers all of the flag/env-var resolution logic and

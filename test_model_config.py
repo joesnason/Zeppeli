@@ -1,7 +1,8 @@
 """Automated tests for cloud-model configuration (--base-url/--model/
 --api-key and their LITELLM_* env-var fallbacks) plus core.agent.load_llm()'s
-backend-branching logic. No Ollama/network dependency — safe to run anytime,
-exits non-zero on failure. Style matches test_permission_modes.py.
+backend-branching logic and core.agent.get_context_window()'s modelinfo
+key-matching/error-handling. No Ollama/network dependency — safe to run
+anytime, exits non-zero on failure. Style matches test_permission_modes.py.
 """
 
 import os
@@ -172,6 +173,80 @@ def test_load_llm_cloud_branch_omits_api_key_when_absent():
         del sys.modules["langchain_litellm"]
 
 
+# --- core/agent.py: get_context_window() -----------------------------------
+
+def test_get_context_window_reads_family_prefixed_key():
+    class _FakeShowResponse:
+        modelinfo = {"general.parameter_count": 8e9, "llama.context_length": 131072}
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = lambda model: _FakeShowResponse()
+    sys.modules["ollama"] = fake_module
+    try:
+        assert agent.get_context_window("gemma4:26b-nvfp4") == 131072
+    finally:
+        del sys.modules["ollama"]
+
+
+def test_get_context_window_defaults_model_to_MODEL_constant():
+    seen = {}
+
+    class _FakeShowResponse:
+        modelinfo = {"gemma3.context_length": 8192}
+
+    def _spy_show(model):
+        seen["model"] = model
+        return _FakeShowResponse()
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = _spy_show
+    sys.modules["ollama"] = fake_module
+    try:
+        agent.get_context_window()
+        assert seen["model"] == agent.MODEL
+    finally:
+        del sys.modules["ollama"]
+
+
+def test_get_context_window_returns_none_when_no_context_length_key():
+    class _FakeShowResponse:
+        modelinfo = {"general.parameter_count": 8e9}
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = lambda model: _FakeShowResponse()
+    sys.modules["ollama"] = fake_module
+    try:
+        assert agent.get_context_window("x") is None
+    finally:
+        del sys.modules["ollama"]
+
+
+def test_get_context_window_returns_none_when_modelinfo_absent():
+    class _FakeShowResponse:
+        modelinfo = None
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = lambda model: _FakeShowResponse()
+    sys.modules["ollama"] = fake_module
+    try:
+        assert agent.get_context_window("x") is None
+    finally:
+        del sys.modules["ollama"]
+
+
+def test_get_context_window_returns_none_on_exception():
+    def _raising_show(model):
+        raise ConnectionError("no route to host")
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = _raising_show
+    sys.modules["ollama"] = fake_module
+    try:
+        assert agent.get_context_window("x") is None
+    finally:
+        del sys.modules["ollama"]
+
+
 TESTS = [
     test_resolve_config_base_url_without_model_raises_systemexit_2,
     test_resolve_config_base_url_with_model_flag_ok,
@@ -185,6 +260,11 @@ TESTS = [
     test_load_llm_ollama_branch_default_unchanged,
     test_load_llm_cloud_branch_builds_expected_kwargs,
     test_load_llm_cloud_branch_omits_api_key_when_absent,
+    test_get_context_window_reads_family_prefixed_key,
+    test_get_context_window_defaults_model_to_MODEL_constant,
+    test_get_context_window_returns_none_when_no_context_length_key,
+    test_get_context_window_returns_none_when_modelinfo_absent,
+    test_get_context_window_returns_none_on_exception,
 ]
 
 
