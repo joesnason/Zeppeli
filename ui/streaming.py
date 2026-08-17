@@ -47,13 +47,24 @@ def _format_model_error(e: Exception) -> str:
         )
     low = msg.lower()
     if "image" in low and any(
-        k in low for k in ("not support", "unsupported", "invalid", "no vision")
+        k in low for k in (
+            "not support", "unsupported", "invalid", "no vision",
+            # vLLM's own multimodal-input validation phrases this as a limit
+            # rather than an "unsupported"/"invalid" refusal, e.g. "At most 0
+            # image(s) may be provided in one prompt. (parameter=image)" when
+            # the served checkpoint has no image modality at all.
+            "may be provided", "parameter=image",
+        )
     ):
         return (
             "this model doesn't accept image input. Send the message "
-            "without an image, or switch to a vision model "
+            "without an image, or switch to a vision-capable model/endpoint "
             "(e.g. --base-url http://host:8000/v1 "
-            "--model hosted_vllm/qwen3.6-27b-awq-int4)."
+            "--model hosted_vllm/qwen3.6-27b-awq-int4) — if you're already "
+            "pointed at what should be a vision model, double-check the "
+            "checkpoint actually being served is the VL/vision variant, not "
+            "a text-only one, and that the server wasn't started with an "
+            "image limit of 0 (vLLM's --limit-mm-per-prompt)."
         )
     return f"{name}: {msg}"
 

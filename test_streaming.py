@@ -105,6 +105,23 @@ def test_format_model_error_generic_image_word_alone_does_not_trigger_vision_hin
     assert "doesn't accept image input" not in msg
 
 
+def test_format_model_error_vllm_zero_image_limit_gets_friendly_hint():
+    # Real-world message from a hosted_vllm endpoint serving a checkpoint
+    # with no image modality at all (e.g. a text-only model under a
+    # vision-sounding name/tag) — phrased as a limit, not "unsupported"/
+    # "invalid", so it needs its own keyword match.
+    msg = _format_model_error(
+        Exception(
+            'litellm.BadRequestError: Hosted_vllmException - {"error":'
+            '{"message":"At most 0 image(s) may be provided in one prompt. '
+            '(parameter=image)","type":"BadRequestError","param":"image",'
+            '"code":400}}'
+        )
+    )
+    assert "doesn't accept image input" in msg
+    assert "vision model" in msg
+
+
 def test_stream_response_returns_none_on_raise_instead_of_propagating():
     console = Console(file=io.StringIO())
     llm = _RaisingLLM(RuntimeError("connection reset"))
@@ -125,6 +142,7 @@ TESTS = [
     test_format_model_error_generic_exception_is_short_and_labeled,
     test_format_model_error_vision_unsupported_gets_friendly_hint,
     test_format_model_error_generic_image_word_alone_does_not_trigger_vision_hint,
+    test_format_model_error_vllm_zero_image_limit_gets_friendly_hint,
     test_stream_response_returns_none_on_raise_instead_of_propagating,
 ]
 
