@@ -26,6 +26,9 @@ build/
 .claude/
 CLAUDE.md
 
+# Benchmark test data (local scratch, not repo content)
+logs/
+
 # macOS
 .DS_Store
 
