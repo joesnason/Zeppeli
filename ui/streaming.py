@@ -45,6 +45,16 @@ def _format_model_error(e: Exception) -> str:
             "narrower rg_search pattern/glob, a smaller read_file range, or "
             "start a fresh conversation."
         )
+    low = msg.lower()
+    if "image" in low and any(
+        k in low for k in ("not support", "unsupported", "invalid", "no vision")
+    ):
+        return (
+            "this model doesn't accept image input. Send the message "
+            "without an image, or switch to a vision model "
+            "(e.g. --base-url http://host:8000/v1 "
+            "--model hosted_vllm/qwen3.6-27b-awq-int4)."
+        )
     return f"{name}: {msg}"
 
 

@@ -17,6 +17,15 @@ from .tools import (
     write_file,
     delete_file,
 )
+from .images import (
+    ImageError,
+    IMAGE_EXTS,
+    is_image_path,
+    resolve_image_path,
+    parse_image_mentions,
+    load_image_block,
+    build_message_content,
+)
 
 __all__ = [
     "MODEL",
@@ -34,4 +43,11 @@ __all__ = [
     "read_file",
     "write_file",
     "delete_file",
+    "ImageError",
+    "IMAGE_EXTS",
+    "is_image_path",
+    "resolve_image_path",
+    "parse_image_mentions",
+    "load_image_block",
+    "build_message_content",
 ]

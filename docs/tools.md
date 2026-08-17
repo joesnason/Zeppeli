@@ -45,6 +45,26 @@ This means the model can pass any of: an absolute path, `~/foo`, or a bare
 relative path like `foo/bar.py`, and it will always resolve consistently
 regardless of what the shell's cwd happens to be at tool-call time.
 
+## Images are not a tool
+
+Attaching an image (`@path` mention, `/image <path>` command, or `--image`
+CLI flag — see [`docs/models.md`](models.md#vision--image-input) for the
+wire format) never goes through `TOOLS`/`bind_tools()`. It's message
+*content*, built by `core/images.py`'s `build_message_content()` and
+appended straight into the `HumanMessage` in `ui/turn.py`'s `run_turn()` —
+the model never issues a tool call to see an attached image, and there is
+no `view_image` tool.
+
+`core/images.py`'s `resolve_image_path()` deliberately mirrors this file's
+`resolve_paths()` rule-for-rule (expanduser → join `initial_cwd` if
+relative → absolute passes through unchanged), so `@shots/error.png` and a
+`read_file({"path": "shots/error.png"})` tool call resolve to the exact
+same absolute path. That equivalence is also why `SYSTEM_PROMPT`
+(`core/agent.py`) explicitly warns the model **not** to call `read_file` on
+an image path it sees attached — `read_file` opens with
+`encoding="utf-8", errors="replace"` (see below), which turns binary image
+bytes into mojibake instead of raising a clean error.
+
 ## Pre-tool hooks (permission prompts)
 
 Some tools are considered destructive and run through a confirmation hook

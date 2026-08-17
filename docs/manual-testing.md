@@ -48,6 +48,26 @@ Expect `19/19 passed`, exit code `0`. A failure here means the permission
 dispatch logic itself broke — fix that before bothering with the manual
 checklist below.
 
+## Automated: `test_images.py`
+
+```bash
+python3 test_images.py
+```
+
+No Ollama/network dependency. Covers `core/images.py`'s `@`-mention
+parsing, path resolution, downscaling (Pillow-gated — reports `[SKIP]`
+rather than `[FAIL]` if Pillow isn't installed), content-block shape, the
+`run_turn(images=...)` integration, `cli.py --image` validation, and the
+`/image` staging commands in `ui/repl.py`. Two of its tests call directly
+into the installed `langchain_ollama`/`langchain_litellm` packages to
+confirm both backends accept the exact block shape this project sends
+(`[SKIP]` if either package isn't installed) — see
+[`docs/models.md`](models.md#vision--image-input).
+
+Expect `44/44 passed (0 skipped)` with the full `requirements.txt`
+installed. A failure here means the image pipeline broke — fix that before
+the manual checklist below.
+
 ## Manual: against the live model
 
 The rest of this checklist covers the real thing — end-to-end, against the
@@ -190,6 +210,97 @@ before the `/` updates with usage while the `/ yy k` window stays fixed.
 Then run `python3 cli.py --base-url <url> --model <name>` (a cloud/litellm
 model) and confirm the toolbar shows plain `Ctx: xx k` with **no** `/ yy k`
 suffix — there's no equivalent lookup for a non-Ollama backend.
+
+### 10. `-p --image` against a real vision endpoint
+
+```bash
+python3 cli.py --base-url http://<vllm-host>:8000/v1 \
+  --model hosted_vllm/qwen3.6-27b-awq-int4 \
+  -p "這張圖裡有什麼？" --image ./shot.png
+```
+
+Expect: a response that actually describes the image's content (not a
+generic "I can't see images" answer). See
+[`docs/models.md`](models.md#vision--image-input).
+
+### 11. `@path` mention in the REPL
+
+```bash
+python3 cli.py --base-url <url> --model hosted_vllm/qwen3.6-27b-awq-int4
+> 這張圖有什麼問題 @shots/error.png
+```
+
+Expect: an `[image: shots/error.png]` line echoed under your orange input
+line, and a response grounded in the actual image. Also try a
+drag-and-dropped path (produces `\ `-escaped spaces, e.g.
+`@Screen\ Shot\ 2026-08-17.png`) — confirm it resolves correctly. Then send
+a message containing `@tool` (no image extension) and confirm it's *not*
+treated as an attachment — no `[image: ...]` line, text unchanged.
+
+### 12. `/image` staging
+
+```bash
+> /image shots/other.png
+> 那這張呢
+```
+
+Expect: `/image shots/other.png` prints a dim `Staged: shots/other.png (1
+image)` note and does **not** count as a turn (no model call). The next
+message (`那這張呢`) shows the `[image: ...]` echo and includes the image.
+The message *after that* has no image attached — staging is consumed, not
+sticky. Also try `/image` alone (lists currently staged, or shows usage)
+and `/image clear`.
+
+### 13. Tab completion after `@`
+
+```bash
+python3 cli.py
+```
+
+Type `@` followed by a partial path and press Tab. Expect: a completion
+menu offers matching files/directories (filtered to directories and image
+extensions only) without the bottom toolbar changing height or leaving a
+blank-line artifact — this is the riskiest part of the feature (see
+`ui/completion.py` and the `reserve_space_for_menu`/
+`complete_while_typing` comments in `ui/repl.py`). Confirm typing normal
+text (no `@`) never pops the menu.
+
+### 14. Text-only model + image → friendly error, not a crash
+
+```bash
+python3 cli.py --image shot.png
+> describe this
+```
+
+using a model/endpoint without vision support (e.g. plain local
+`ChatOllama` with a text-only tag). Expect: one readable red line via
+`_format_model_error()`'s vision-unsupported hint (see
+[`docs/models.md`](models.md#what-happens-with-a-text-only-model)), not a
+raw traceback — and the REPL survives; a follow-up text-only message still
+works.
+
+### 15. Missing / oversize / corrupt image → error before any model call
+
+```bash
+> what's in @nonexistent.png
+> /image /path/to/huge_50mb_photo.png
+```
+
+Expect: a red `Error: image not found: ...` (or `too large`/`unsupported
+image type`) printed *before* any spinner/model call, and the message
+history is unchanged — a bad attachment via `@mention` doesn't consume the
+turn or get sent as text-only either (see `run_turn()`'s `ImageError`
+handling in `ui/turn.py`).
+
+### Known pre-existing limitation, not an image-feature regression
+
+The `\x1b[A\x1b[2K` used to replace the typed input line with its orange
+echo (`ui/repl.py`) assumes the input occupied exactly one terminal row —
+already inaccurate for a wrapped line before this feature existed. Long
+absolute image paths make wrapping more likely to happen; if you see a
+stray line left behind after attaching an image, check whether it
+reproduces with a long *non-image* message too before treating it as a
+bug in this feature.
 
 ### Also worth re-checking after any change here
 

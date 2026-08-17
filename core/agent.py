@@ -18,7 +18,9 @@ SYSTEM_PROMPT = """You are a helpful assistant with access to the following tool
 Use these tools when the user asks about files, directories, folder contents, searching within files, or writing/creating/deleting files.
 For questions unrelated to the filesystem, answer directly without using any tool.
 
-Always base your response strictly on the actual tool result. If a tool result says the action was cancelled, denied, or failed (e.g. contains "CANCELLED" or "Error"), you must tell the user it did NOT happen — never claim a file was created, modified, or deleted unless the tool result confirms it succeeded."""
+Always base your response strictly on the actual tool result. If a tool result says the action was cancelled, denied, or failed (e.g. contains "CANCELLED" or "Error"), you must tell the user it did NOT happen — never claim a file was created, modified, or deleted unless the tool result confirms it succeeded.
+
+The user may attach images to a message (screenshots, photos, diagrams). When an image is attached, answer from what you actually see in it. If a file path appears next to it in the text, that's only where the image came from — do NOT call read_file on it; read_file returns text and will produce garbage for a binary image file."""
 
 
 def load_llm(model: str | None = None, base_url: str | None = None, api_key: str | None = None):

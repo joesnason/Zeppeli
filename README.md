@@ -7,7 +7,8 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 - Multi-turn conversation — AI remembers context across turns
 - Streaming output — responses print token by token
 - Tool calling — AI can search/inspect files and edit (write/delete) files when relevant
-- Slash commands: `/exit` to quit
+- Image input — attach a local image via `@path`, `/image <path>`, or `--image` for vision-capable models (see [`docs/models.md`](docs/models.md#vision--image-input))
+- Slash commands: `/exit` to quit, `/image <path>` to attach an image
 
 ## Requirements
 
@@ -18,6 +19,9 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 - Node.js 22+ (for `glob_files` tool)
 - `langchain-litellm`/`litellm` install by default via `requirements.txt`,
   but are only actually used when `--base-url`/`LITELLM_BASE_URL` is set
+- `Pillow` installs by default via `requirements.txt`, used to downscale
+  attached images before sending — a small image still works without it,
+  see [`docs/models.md`](docs/models.md#vision--image-input)
 
 ## Setup
 
@@ -69,6 +73,12 @@ typing at the input prompt to clear the line back to empty.
   litellm's provider prefix, e.g. `openai/gpt-4o-mini`. Each of the three
   can also be set via `LITELLM_BASE_URL`/`LITELLM_MODEL`/`LITELLM_API_KEY`
   env vars (flag takes precedence). See [`docs/models.md`](docs/models.md).
+- `python3 cli.py --image <path>` (repeatable, max 4) — attach a local
+  image to the turn. With `-p`, attaches to that one turn; without it,
+  attaches to your first REPL message. Requires a vision-capable model
+  (e.g. `--base-url http://host:8000/v1 --model hosted_vllm/qwen3.6-27b-awq-int4`).
+  In the REPL you can also attach with `@path` inline or `/image <path>`.
+  See [`docs/models.md`](docs/models.md#vision--image-input).
 
 ```
 Ollama Chat (gemma4:26b-nvfp4)  — type 'quit' or Ctrl+C to exit
@@ -88,6 +98,10 @@ Zeppeli> 在以下位置找到 @tool：...
 You> 讀取 cli.py 的前 20 行
   [tool: read_file({'path': 'cli.py', 'limit': 20})]
 Zeppeli> 以下是 cli.py 的前 20 行：...
+
+You> 這張圖有什麼問題 @shots/error.png
+  [image: shots/error.png]
+Zeppeli> 這是一個 Python TypeError...
 
 You> 建立一個 hello.txt，內容是 "Hello, world!"
   [tool: write_file({'path': 'hello.txt', 'content': 'Hello, world!'})]
@@ -120,6 +134,7 @@ implementation details.
 | `test_model_config.py` | Automated tests for model/cloud config resolution — no Ollama/network needed |
 | `test_streaming.py` | Automated tests for chunk-content normalization and model-error handling in streaming — no Ollama/network needed |
 | `test_tools.py` | Automated tests for `rg_search`'s output cap — no Ollama/network needed |
+| `test_images.py` | Automated tests for image attachment (`@path`/`/image`/`--image`) — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
 | `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md) and [`docs/models.md`](docs/models.md) |

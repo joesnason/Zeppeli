@@ -114,6 +114,74 @@ into plain text; `stream_response()` calls it on every chunk instead of
 using `chunk.content` directly. Covered by `test_streaming.py`, no live
 endpoint required.
 
+## Vision / image input
+
+`core/images.py` builds `HumanMessage` content from an image list — see
+[`docs/tools.md`](tools.md#images-are-not-a-tool) for how it's invoked
+(`@path` mention, `/image` command, `--image` flag). The interesting part
+for this doc is that **one content-block format works against both
+backends unchanged**:
+
+```python
+{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+```
+
+- `ChatOllama` (`langchain_ollama/chat_models.py`'s
+  `_convert_messages_to_ollama_messages()`) recognizes this exact shape,
+  strips the `data:...;base64,` prefix itself, and puts the raw base64 into
+  Ollama's own `images` field.
+- `ChatLiteLLM` (`langchain_litellm`'s `_convert_message_to_dict()`) doesn't
+  recognize `"image_url"` as one of `langchain_core`'s newer typed data
+  content blocks, so it falls through the "pass through standard text
+  blocks or other unrecognized dict formats unchanged" branch — the block
+  reaches litellm, and therefore the `hosted_vllm/` endpoint, byte-for-byte
+  as constructed. Verified directly against the installed package (not just
+  read from source) — see `test_images.py`'s
+  `test_litellm_message_conversion_passes_list_content` — and end-to-end
+  against a mock OpenAI-compatible server capturing the actual HTTP request
+  body.
+
+So attaching an image to a `hosted_vllm/qwen3.6-27b-awq-int4` run needs
+**zero** extra config beyond what "The `openai/` prefix convention" above
+already covers — `model` is passed through as-is, so
+`--model hosted_vllm/qwen3.6-27b-awq-int4 --base-url http://host:8000/v1`
+already routes correctly; the only new thing is attaching the image.
+
+`build_message_content()` returns a plain `str` when no images are
+attached — never a single-element list. This matters because
+`ChatOllama`'s list-content branch prepends `\n` to every text part it
+sees; always returning a list would silently add a leading newline to
+every existing text-only prompt.
+
+### Downscaling and size caps
+
+Before encoding, `core/images._downscale()` (lazy `PIL` import) resizes to
+a `1568px` long edge (never upscales) and re-encodes as PNG (if the source
+has alpha) or JPEG, trying progressively lower quality/size until the
+base64 payload fits under `MAX_ENCODED_BYTES` (4 MB). `MAX_SOURCE_BYTES`
+(20 MB) rejects an oversize original before it's even opened.
+`MAX_IMAGES` (4 per message) × `MAX_ENCODED_BYTES` means a single request
+can carry up to ~16 MB of image data — fine for vLLM itself, but if there's
+a reverse proxy (e.g. nginx) in front of the endpoint, check its
+`client_max_body_size` — the common `1m` default will reject that request
+with an opaque error before it reaches vLLM at all.
+
+If Pillow isn't installed, `_downscale()` falls back to sending the raw
+file unmodified as long as it's under 2 MB, and raises a clear
+`ImageError` (asking for `pip3 install Pillow`) for anything bigger — it
+doesn't hard-fail the whole feature.
+
+### What happens with a text-only model
+
+If the loaded model doesn't understand `image_url` content (a non-vision
+OpenAI-compatible endpoint, or a text-only Ollama tag), the provider
+returns an error, which surfaces through the same path as every other
+model-call failure — `ui/streaming.py`'s `stream_response()` catches it
+and calls `_format_model_error()`. A branch there matches image-rejection
+wording (`"image"` plus `"not support"`/`"unsupported"`/`"invalid"`/
+`"no vision"`) and returns a one-line hint suggesting a vision model
+instead of dumping the raw provider error.
+
 ## `usage_metadata` and the toolbar's `Ctx: xx k` counter
 
 `ui/streaming.py`'s `_update_ctx()` already tolerates a response with no
@@ -190,4 +258,15 @@ it isn't something this repo's automated tests can cover on their own:
 
 ```bash
 python3 cli.py --base-url <real-url> --model openai/<real-model> --api-key <key> -p "What is 2 + 2?"
+```
+
+The vision path additionally needs a round trip that actually sends image
+bytes — the mock-server check above (`test_images.py`) proves the request
+is well-formed, but not that a real vLLM/qwen backend accepts and reads
+it:
+
+```bash
+python3 cli.py --base-url http://<vllm-host>:8000/v1 \
+  --model hosted_vllm/qwen3.6-27b-awq-int4 \
+  -p "這張圖裡有什麼？" --image ./shot.png
 ```

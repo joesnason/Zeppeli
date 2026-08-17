@@ -12,11 +12,16 @@ combine it with either mode flag as needed.
 --base-url/--model/--api-key (each also settable via LITELLM_BASE_URL/
 LITELLM_MODEL/LITELLM_API_KEY) switch to a cloud/self-hosted model via
 litellm instead of local Ollama — see docs/models.md.
+
+--image PATH (repeatable) attaches a local image file — see the "Vision /
+image input" section of docs/models.md.
 """
 
 import argparse
 import os
+import pathlib
 
+from core.images import is_image_path
 from ui import MODE_APPROVAL, MODE_AUTO, MODE_YOLO, main
 
 
@@ -63,6 +68,14 @@ def _build_parser():
              "provider-specific env vars (e.g. OPENAI_API_KEY) if neither "
              "is set.",
     )
+    parser.add_argument(
+        "--image", type=str, action="append", default=None, metavar="PATH",
+        help="Attach a local image file to the turn (repeatable, max 4). "
+             "Local paths only — no URLs. Downscaled to 1568px on the long "
+             "edge before sending. Requires a vision-capable model. With "
+             "-p/--prompt, attaches to that one turn; without it, attaches "
+             "to your first message in the REPL.",
+    )
     return parser
 
 
@@ -96,6 +109,23 @@ def _resolve_config(args):
     return model, base_url, api_key
 
 
+def _resolve_images(args) -> list[str]:
+    """Validate --image paths eagerly (existence + extension) so a typo
+    fails fast with SystemExit(2), same as _resolve_config's validation,
+    instead of surfacing later as an opaque ImageError mid-turn. Kept
+    separate from _resolve_config on purpose — folding it in would change
+    that function's return arity and break its existing tests."""
+    paths = []
+    for raw in (args.image or []):
+        p = pathlib.Path(raw).expanduser()
+        if not p.is_file():
+            _build_parser().error(f"--image: file not found: {raw}")
+        if not is_image_path(str(p)):
+            _build_parser().error(f"--image: unsupported image type: {raw}")
+        paths.append(str(p))
+    return paths
+
+
 if __name__ == "__main__":
     args = _parse_args()
     if args.yolo_mode:
@@ -105,4 +135,6 @@ if __name__ == "__main__":
     else:
         mode = MODE_APPROVAL
     model, base_url, api_key = _resolve_config(args)
-    main(mode=mode, prompt=args.prompt, model=model, base_url=base_url, api_key=api_key)
+    images = _resolve_images(args)
+    main(mode=mode, prompt=args.prompt, model=model, base_url=base_url,
+         api_key=api_key, images=images)

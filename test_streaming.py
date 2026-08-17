@@ -89,6 +89,22 @@ def test_format_model_error_generic_exception_is_short_and_labeled():
     assert len(msg) < 350  # truncated, not the full 1000-char message
 
 
+def test_format_model_error_vision_unsupported_gets_friendly_hint():
+    msg = _format_model_error(
+        Exception("BadRequestError: image input is not supported by this model")
+    )
+    assert "doesn't accept image input" in msg
+    assert "vision model" in msg
+
+
+def test_format_model_error_generic_image_word_alone_does_not_trigger_vision_hint():
+    # "image" alone (no unsupported/invalid/etc. keyword) must not be
+    # mistaken for the vision-unsupported case — e.g. a generic error that
+    # happens to mention "image" in an unrelated sense.
+    msg = _format_model_error(ValueError("failed to process the image upload"))
+    assert "doesn't accept image input" not in msg
+
+
 def test_stream_response_returns_none_on_raise_instead_of_propagating():
     console = Console(file=io.StringIO())
     llm = _RaisingLLM(RuntimeError("connection reset"))
@@ -107,6 +123,8 @@ TESTS = [
     test_extract_text_none,
     test_format_model_error_context_window_exceeded_gets_friendly_hint,
     test_format_model_error_generic_exception_is_short_and_labeled,
+    test_format_model_error_vision_unsupported_gets_friendly_hint,
+    test_format_model_error_generic_image_word_alone_does_not_trigger_vision_hint,
     test_stream_response_returns_none_on_raise_instead_of_propagating,
 ]
 
