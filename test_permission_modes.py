@@ -14,6 +14,12 @@ Covers:
 - ui.repl._clear_input: Esc clears the live input buffer, no-ops if empty
 - ui.repl main()'s per-process session ID: uniqueness, and its rendering in
   _get_toolbar()
+
+Tests that call ui.repl.main() for real also redirect
+core.sessions.SESSIONS_DIR to a temp dir (main() now unconditionally writes
+a session-history file — see test_sessions.py for that feature's own
+coverage) so this suite never touches the developer's real
+~/.zeppeli/sessions/.
 """
 
 import sys
@@ -26,6 +32,7 @@ from prompt_toolkit.buffer import Buffer
 from rich.console import Console
 
 import cli
+import core.sessions as sessions
 import ui.permissions as permissions
 import ui.repl as repl
 from ui.permissions import (
@@ -45,6 +52,7 @@ _ORIGINAL_ARROW_MENU = permissions._arrow_menu
 _ORIGINAL_CONFIRM_AUTO_MODE_TRUST = repl.confirm_auto_mode_trust
 _ORIGINAL_REPL_LOAD_LLM = repl.load_llm
 _ORIGINAL_REPL_RUN_TURN = repl.run_turn
+_ORIGINAL_SESSIONS_DIR = sessions.SESSIONS_DIR
 
 _console = Console()
 
@@ -196,12 +204,15 @@ def test_main_prompt_mode_skips_trust_check():
     repl.confirm_auto_mode_trust = _spy
     repl.load_llm = lambda **k: object()
     repl.run_turn = lambda *a, **k: None
-    try:
-        repl.main(mode=MODE_AUTO, prompt="hi")
-    finally:
-        repl.confirm_auto_mode_trust = _ORIGINAL_CONFIRM_AUTO_MODE_TRUST
-        repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
-        repl.run_turn = _ORIGINAL_REPL_RUN_TURN
+    with tempfile.TemporaryDirectory() as tmp:
+        sessions.SESSIONS_DIR = Path(tmp) / "sessions"
+        try:
+            repl.main(mode=MODE_AUTO, prompt="hi")
+        finally:
+            repl.confirm_auto_mode_trust = _ORIGINAL_CONFIRM_AUTO_MODE_TRUST
+            repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
+            repl.run_turn = _ORIGINAL_REPL_RUN_TURN
+            sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
 
 
 def test_clear_input_esc_empties_nonempty_buffer():
@@ -222,14 +233,17 @@ def test_clear_input_esc_noop_on_empty_buffer():
 def test_main_seeds_unique_session_id():
     repl.load_llm = lambda **k: object()
     repl.run_turn = lambda *a, **k: None
-    try:
-        repl.main(mode=MODE_APPROVAL, prompt="hi")
-        first_id = repl._session_state["id"]
-        repl.main(mode=MODE_APPROVAL, prompt="hi")
-        second_id = repl._session_state["id"]
-    finally:
-        repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
-        repl.run_turn = _ORIGINAL_REPL_RUN_TURN
+    with tempfile.TemporaryDirectory() as tmp:
+        sessions.SESSIONS_DIR = Path(tmp) / "sessions"
+        try:
+            repl.main(mode=MODE_APPROVAL, prompt="hi")
+            first_id = repl._session_state["id"]
+            repl.main(mode=MODE_APPROVAL, prompt="hi")
+            second_id = repl._session_state["id"]
+        finally:
+            repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
+            repl.run_turn = _ORIGINAL_REPL_RUN_TURN
+            sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
 
     uuid.UUID(first_id)  # raises ValueError if not a valid UUID string
     uuid.UUID(second_id)

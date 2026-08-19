@@ -5,28 +5,9 @@ from rich.live import Live
 from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
 
+from core.messages import extract_text as _extract_text
+
 _ctx_state = {"tokens": 0}
-
-
-def _extract_text(content) -> str:
-    """Normalize an AIMessage chunk's `.content` into plain text.
-
-    ChatOllama chunks give a plain str. Some litellm-routed cloud/self-hosted
-    backends (e.g. Anthropic-style APIs) instead give a list of str/dict
-    content blocks (e.g. [{"type": "text", "text": "..."}], possibly mixed
-    with non-text blocks like tool_use) — those must be flattened to text
-    before Markdown rendering, or RichMarkdown(...) raises a TypeError."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and item.get("type") == "text":
-                parts.append(item.get("text", ""))
-        return "".join(parts)
-    return ""
 
 
 def _format_model_error(e: Exception) -> str:

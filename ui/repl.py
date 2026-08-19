@@ -4,6 +4,7 @@ import pathlib
 import re
 import shutil
 import sys
+import time
 import uuid
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
@@ -15,6 +16,14 @@ from rich.rule import Rule
 from langchain_core.messages import SystemMessage
 
 from core import MODEL as DEFAULT_MODEL, SYSTEM_PROMPT, load_llm, get_context_window
+from core.sessions import (
+    append_history_from_messages,
+    create_session,
+    finish_run_from_messages,
+    flush_pending_writes,
+    save_session,
+    start_run,
+)
 from core.images import MAX_SOURCE_BYTES, is_image_path, parse_image_mentions, resolve_image_path
 from .completion import AtPathCompleter
 from .permissions import MODE_APPROVAL, MODE_AUTO, MODE_YOLO, confirm_auto_mode_trust
@@ -114,6 +123,45 @@ def _take_pending_images() -> list[str]:
     return paths
 
 
+def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
+                      mode, images, session):
+    """Run one turn via run_turn(), then record it into `session` and write
+    it to disk. Wraps run_turn() rather than modifying it, so ui/turn.py
+    keeps no knowledge of persistence — this is the only place that needs
+    both `session` and the `messages` list to diff before/after the call.
+
+    A "running" stub is appended and saved *before* run_turn() runs, so a
+    process kill mid-turn (e.g. Ctrl+C, which today propagates uncaught out
+    of run_turn()) leaves an honest on-disk record — that run just stays at
+    status "running" with no completedAt, rather than vanishing. Any bug in
+    this bookkeeping itself is swallowed: a persistence bug must never keep
+    the user's actual turn (already completed by run_turn() above) from
+    landing on screen.
+    """
+    start_index = len(messages)
+    run = start_run()
+    session.runs.append(run)
+    save_session(session)
+
+    t0 = time.monotonic()
+    run_turn(llm_with_tools, messages, user_input, console, initial_cwd, mode, images=images)
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    try:
+        new_messages = messages[start_index:]
+        if not new_messages:
+            # e.g. an ImageError before anything was appended (run_turn()'s
+            # earliest return) — nothing happened; drop the empty stub run
+            # rather than leaving a phantom entry.
+            session.runs.remove(run)
+        else:
+            finish_run_from_messages(run, new_messages, duration_ms)
+            append_history_from_messages(session, messages, start_index)
+        save_session(session)
+    except Exception:
+        pass
+
+
 _kb = KeyBindings()
 _kb.add("s-tab")(_toggle_mode)
 _kb.add("escape")(_clear_input)
@@ -184,11 +232,25 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
     initial_cwd = str(pathlib.Path.cwd())
     messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
 
+    # Created once per process and written immediately (0 runs, 0 history)
+    # so even a session that never completes a turn still leaves a file.
+    # Same code path for interactive and one-shot -p — see docs/sessions.md.
+    # Named history_session (not `session`) because the PromptSession object
+    # below is conventionally called `session` in this REPL loop already.
+    history_session = create_session(_session_state["id"], initial_cwd, _model_state["name"])
+    save_session(history_session)
+
     if prompt is not None:
         # One-shot mode: run exactly one turn and exit — no PromptSession/
         # toolbar (both assume an interactive terminal) and no REPL loop.
-        run_turn(llm_with_tools, messages, prompt, console, initial_cwd, mode,
-                 images=_take_pending_images())
+        _run_and_persist(llm_with_tools, messages, prompt, console, initial_cwd, mode,
+                          images=_take_pending_images(), session=history_session)
+        # -p is meant to be deterministic/scriptable — a caller may read the
+        # session file the instant this process exits, so flush explicitly
+        # rather than relying on atexit's timing. The interactive REPL loop
+        # below doesn't get an equivalent per-turn flush (that would defeat
+        # the point of queuing at all) — it relies on atexit when it exits.
+        flush_pending_writes()
         return
 
     if not base_url:
@@ -254,5 +316,5 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
             console.print(f"[dim]  [image: {escape(_display_path(p, initial_cwd))}][/dim]")
         console.print()
 
-        run_turn(llm_with_tools, messages, text, console, initial_cwd,
-                 _mode_state["mode"], images=images)
+        _run_and_persist(llm_with_tools, messages, text, console, initial_cwd,
+                          _mode_state["mode"], images=images, session=history_session)

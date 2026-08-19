@@ -122,6 +122,13 @@ The AI has access to tools for searching/inspecting files and for editing
 confirmation. See [`docs/tools.md`](docs/tools.md) for the full list and
 implementation details.
 
+## Session History
+
+Every run — interactive REPL or one-shot `-p` — is automatically recorded
+to `~/.zeppeli/sessions/session-<id>.json` (conversation history plus
+per-turn run stats), no flag required. See
+[`docs/sessions.md`](docs/sessions.md) for the storage format and lifecycle.
+
 ## Files
 
 | File | Purpose |
@@ -135,9 +142,10 @@ implementation details.
 | `test_streaming.py` | Automated tests for chunk-content normalization and model-error handling in streaming — no Ollama/network needed |
 | `test_tools.py` | Automated tests for `rg_search`'s output cap — no Ollama/network needed |
 | `test_images.py` | Automated tests for image attachment (`@path`/`/image`/`--image`) — no Ollama/network needed |
+| `test_sessions.py` | Automated tests for session-history persistence (`core/sessions.py`) — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
-| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md) and [`docs/models.md`](docs/models.md) |
+| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), and [`docs/sessions.md`](docs/sessions.md) |
 
 ## Exit
 
