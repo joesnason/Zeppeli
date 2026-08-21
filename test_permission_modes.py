@@ -16,10 +16,11 @@ Covers:
   _get_toolbar()
 
 Tests that call ui.repl.main() for real also redirect
-core.sessions.SESSIONS_DIR to a temp dir (main() now unconditionally writes
-a session-history file — see test_sessions.py for that feature's own
-coverage) so this suite never touches the developer's real
-~/.zeppeli/sessions/.
+core.sessions.SESSIONS_DIR and core.eventlog.LOGS_DIR to a temp dir
+(main() now unconditionally writes a session-history file and an
+event-log file — see test_sessions.py / test_eventlog.py for those
+features' own coverage) so this suite never touches the developer's real
+~/.zeppeli/sessions/ or ~/.zeppeli/logs/.
 """
 
 import sys
@@ -32,6 +33,7 @@ from prompt_toolkit.buffer import Buffer
 from rich.console import Console
 
 import cli
+import core.eventlog as eventlog
 import core.sessions as sessions
 import ui.permissions as permissions
 import ui.repl as repl
@@ -53,6 +55,7 @@ _ORIGINAL_CONFIRM_AUTO_MODE_TRUST = repl.confirm_auto_mode_trust
 _ORIGINAL_REPL_LOAD_LLM = repl.load_llm
 _ORIGINAL_REPL_RUN_TURN = repl.run_turn
 _ORIGINAL_SESSIONS_DIR = sessions.SESSIONS_DIR
+_ORIGINAL_LOGS_DIR = eventlog.LOGS_DIR
 
 _console = Console()
 
@@ -206,6 +209,7 @@ def test_main_prompt_mode_skips_trust_check():
     repl.run_turn = lambda *a, **k: None
     with tempfile.TemporaryDirectory() as tmp:
         sessions.SESSIONS_DIR = Path(tmp) / "sessions"
+        eventlog.LOGS_DIR = Path(tmp) / "logs"
         try:
             repl.main(mode=MODE_AUTO, prompt="hi")
         finally:
@@ -213,6 +217,7 @@ def test_main_prompt_mode_skips_trust_check():
             repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
             repl.run_turn = _ORIGINAL_REPL_RUN_TURN
             sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
+            eventlog.LOGS_DIR = _ORIGINAL_LOGS_DIR
 
 
 def test_clear_input_esc_empties_nonempty_buffer():
@@ -235,6 +240,7 @@ def test_main_seeds_unique_session_id():
     repl.run_turn = lambda *a, **k: None
     with tempfile.TemporaryDirectory() as tmp:
         sessions.SESSIONS_DIR = Path(tmp) / "sessions"
+        eventlog.LOGS_DIR = Path(tmp) / "logs"
         try:
             repl.main(mode=MODE_APPROVAL, prompt="hi")
             first_id = repl._session_state["id"]
@@ -244,6 +250,7 @@ def test_main_seeds_unique_session_id():
             repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
             repl.run_turn = _ORIGINAL_REPL_RUN_TURN
             sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
+            eventlog.LOGS_DIR = _ORIGINAL_LOGS_DIR
 
     uuid.UUID(first_id)  # raises ValueError if not a valid UUID string
     uuid.UUID(second_id)

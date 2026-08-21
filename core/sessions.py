@@ -43,7 +43,7 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from .messages import extract_text
+from .messages import extract_text, tool_result_ok
 
 SESSIONS_DIR = Path.home() / ".zeppeli" / "sessions"
 STORED_SESSION_VERSION = 1
@@ -263,13 +263,6 @@ def finish_run_from_messages(run: RunEntry, new_messages: list, duration_ms: int
         fail_run(run, reason)
 
 
-def _tool_result_ok(output: str) -> bool:
-    """core/tools.py's @tool functions signal failure by returning an
-    'Error: ...' string rather than raising; ui/turn.py's cancelled-
-    permission result contains 'CANCELLED'. Anything else is success."""
-    return not (output.startswith("Error:") or "CANCELLED" in output)
-
-
 def append_history_from_messages(session: StoredSession, messages: list, start_index: int) -> None:
     """Convert messages[start_index:] (one run_turn() call's newly appended
     LangChain messages) into StoredSessionMessage entries, appended to
@@ -285,7 +278,7 @@ def append_history_from_messages(session: StoredSession, messages: list, start_i
             output = str(m.content)
             session.history.append(StoredSessionMessage(
                 role="tool", content=output, timestamp=_now_iso(),
-                toolResult=ToolResultInfo(ok=_tool_result_ok(output), output=output)))
+                toolResult=ToolResultInfo(ok=tool_result_ok(output), output=output)))
         elif isinstance(m, AIMessage):
             text = extract_text(m.content)
             calls = m.tool_calls or [None]

@@ -26,7 +26,18 @@ from .images import (
     load_image_block,
     build_message_content,
 )
-from .messages import extract_text
+from .messages import extract_text, tool_result_ok
+from .eventlog import (
+    LOGS_DIR,
+    log_path,
+    build_turns_and_outputs,
+    log_session_started,
+    log_run_started,
+    log_model_activity,
+    log_run_completed,
+    log_cli_error,
+    flush_pending_events,
+)
 from .sessions import (
     SESSIONS_DIR,
     STORED_SESSION_VERSION,
@@ -73,6 +84,16 @@ __all__ = [
     "load_image_block",
     "build_message_content",
     "extract_text",
+    "tool_result_ok",
+    "LOGS_DIR",
+    "log_path",
+    "build_turns_and_outputs",
+    "log_session_started",
+    "log_run_started",
+    "log_model_activity",
+    "log_run_completed",
+    "log_cli_error",
+    "flush_pending_events",
     "SESSIONS_DIR",
     "STORED_SESSION_VERSION",
     "StoredSession",

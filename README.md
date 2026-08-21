@@ -129,6 +129,14 @@ to `~/.zeppeli/sessions/session-<id>.json` (conversation history plus
 per-turn run stats), no flag required. See
 [`docs/sessions.md`](docs/sessions.md) for the storage format and lifecycle.
 
+## Event Log
+
+Every run also writes a second, more granular record: an append-only
+JSONL event stream to `~/.zeppeli/logs/log-<session-id>.jsonl` (session
+started, each turn started/completed, per-hop model activity, CLI
+errors), no flag required. See [`docs/logging.md`](docs/logging.md) for
+the event schema and lifecycle.
+
 ## Files
 
 | File | Purpose |
@@ -143,9 +151,10 @@ per-turn run stats), no flag required. See
 | `test_tools.py` | Automated tests for `rg_search`'s output cap — no Ollama/network needed |
 | `test_images.py` | Automated tests for image attachment (`@path`/`/image`/`--image`) — no Ollama/network needed |
 | `test_sessions.py` | Automated tests for session-history persistence (`core/sessions.py`) — no Ollama/network needed |
+| `test_eventlog.py` | Automated tests for the JSONL event log (`core/eventlog.py`) — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
-| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), and [`docs/sessions.md`](docs/sessions.md) |
+| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), and [`docs/logging.md`](docs/logging.md) |
 
 ## Exit
 

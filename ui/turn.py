@@ -12,7 +12,8 @@ from .permissions import MODE_APPROVAL, build_pre_tool_hooks, reset_turn_approva
 
 def run_turn(llm_with_tools, messages, user_input: str, console: Console,
              initial_cwd: str = ".", mode: str = MODE_APPROVAL,
-             images: list[str] | None = None):
+             images: list[str] | None = None,
+             session_id: str | None = None, run_id: str | None = None):
     reset_turn_approvals()
     hooks = build_pre_tool_hooks(mode, initial_cwd)
     try:
@@ -21,11 +22,14 @@ def run_turn(llm_with_tools, messages, user_input: str, console: Console,
         console.print(f"[red]Error: {escape(str(e))}[/red]")
         return
     messages.append(HumanMessage(content=content))
-    response = stream_response(llm_with_tools, messages, console)
+    turn_index = 0
+    response = stream_response(llm_with_tools, messages, console,
+                                session_id=session_id, run_id=run_id, turn_index=turn_index)
     if response is None:
         return
     messages.append(response)
     _update_ctx(response)
+    turn_index += 1
 
     while response.tool_calls:
         for tc in response.tool_calls:
@@ -42,8 +46,10 @@ def run_turn(llm_with_tools, messages, user_input: str, console: Console,
             else:
                 result = TOOLS_BY_NAME[tc["name"]].invoke(resolved_args)
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
-        response = stream_response(llm_with_tools, messages, console)
+        response = stream_response(llm_with_tools, messages, console,
+                                    session_id=session_id, run_id=run_id, turn_index=turn_index)
         if response is None:
             return
         messages.append(response)
         _update_ctx(response)
+        turn_index += 1

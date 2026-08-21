@@ -1,6 +1,8 @@
 """Interactive REPL: input prompt, toolbar, and the top-level turn loop."""
 
+import os
 import pathlib
+import platform
 import re
 import shutil
 import sys
@@ -16,6 +18,15 @@ from rich.rule import Rule
 from langchain_core.messages import SystemMessage
 
 from core import MODEL as DEFAULT_MODEL, SYSTEM_PROMPT, load_llm, get_context_window
+from core.eventlog import (
+    build_turns_and_outputs,
+    flush_pending_events,
+    log_cli_error,
+    log_run_completed,
+    log_run_started,
+    log_session_started,
+)
+from core.messages import extract_text
 from core.sessions import (
     append_history_from_messages,
     create_session,
@@ -142,9 +153,11 @@ def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
     run = start_run()
     session.runs.append(run)
     save_session(session)
+    log_run_started(_session_state["id"], run.id, user_input)
 
     t0 = time.monotonic()
-    run_turn(llm_with_tools, messages, user_input, console, initial_cwd, mode, images=images)
+    run_turn(llm_with_tools, messages, user_input, console, initial_cwd, mode, images=images,
+              session_id=_session_state["id"], run_id=run.id)
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     try:
@@ -157,6 +170,11 @@ def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
         else:
             finish_run_from_messages(run, new_messages, duration_ms)
             append_history_from_messages(session, messages, start_index)
+            answer = extract_text(new_messages[-1].content) if run.status == "completed" else ""
+            turns, model_outputs = build_turns_and_outputs(new_messages)
+            log_run_completed(_session_state["id"], run.id, status=run.status, answer=answer,
+                               stats=run.stats, turns=turns, model_outputs=model_outputs,
+                               error=run.error)
         save_session(session)
     except Exception:
         pass
@@ -228,93 +246,120 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
             console.print("Bye!")
             return
 
-    llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key)
     initial_cwd = str(pathlib.Path.cwd())
-    messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
 
-    # Created once per process and written immediately (0 runs, 0 history)
-    # so even a session that never completes a turn still leaves a file.
-    # Same code path for interactive and one-shot -p — see docs/sessions.md.
-    # Named history_session (not `session`) because the PromptSession object
-    # below is conventionally called `session` in this REPL loop already.
-    history_session = create_session(_session_state["id"], initial_cwd, _model_state["name"])
-    save_session(history_session)
+    # Config is known immediately (from the params, not the loaded llm
+    # object), so session_started can be logged before load_llm() is even
+    # attempted — that call is itself a real failure point (e.g. a bad
+    # litellm config), and the try/except below (which logs any exception
+    # from here on as a cli_error event before re-raising) needs to wrap it
+    # too, not just what comes after a successful load.
+    provider = "litellm" if base_url else "ollama"
+    ollama_url = None if base_url else os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+    log_session_started(_session_state["id"], cwd=initial_cwd, provider=provider,
+                         model=_model_state["name"], ollama_url=ollama_url,
+                         pid=os.getpid(), platform=platform.system().lower())
 
-    if prompt is not None:
-        # One-shot mode: run exactly one turn and exit — no PromptSession/
-        # toolbar (both assume an interactive terminal) and no REPL loop.
-        _run_and_persist(llm_with_tools, messages, prompt, console, initial_cwd, mode,
-                          images=_take_pending_images(), session=history_session)
-        # -p is meant to be deterministic/scriptable — a caller may read the
-        # session file the instant this process exits, so flush explicitly
-        # rather than relying on atexit's timing. The interactive REPL loop
-        # below doesn't get an equivalent per-turn flush (that would defeat
-        # the point of queuing at all) — it relies on atexit when it exits.
-        flush_pending_writes()
-        return
+    try:
+        llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key)
+        messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
 
-    if not base_url:
-        # Local Ollama only — cloud/litellm models have no equivalent
-        # lookup. Fetched once here (not per turn, not per toolbar
-        # re-render) since it's static for the life of the process.
-        _ctx_limit_state["tokens"] = get_context_window(model)
+        # Created once per process and written immediately (0 runs, 0
+        # history) so even a session that never completes a turn still
+        # leaves a file. Same code path for interactive and one-shot -p —
+        # see docs/sessions.md. Named history_session (not `session`)
+        # because the PromptSession object below is conventionally called
+        # `session` in this REPL loop already.
+        history_session = create_session(_session_state["id"], initial_cwd, _model_state["name"])
+        save_session(history_session)
 
-    _toolbar_style = Style.from_dict({
-        "bottom-toolbar": "bg:default fg:default noreverse",
-    })
-    session = PromptSession(
-        bottom_toolbar=_get_toolbar, style=_toolbar_style, key_bindings=_kb,
-        completer=AtPathCompleter(),
-        # Tab-triggered only — the default (True) pops a completion menu on
-        # every keystroke after "@" and fights the bottom toolbar for rows.
-        complete_while_typing=False,
-        # Default is 8 reserved rows, which is exactly the blank-line
-        # artifact the toolbar's fixed-height padding (above) exists to
-        # prevent. Keep this small and verify manually after any change
-        # here — see docs/manual-testing.md.
-        reserve_space_for_menu=4,
-    )
-    # prompt_toolkit's default timeoutlen (1.0s) waits after a lone Esc to
-    # see if it's actually the start of an Alt-combo sequence (Alt+key is
-    # sent as ESC + key on a raw terminal; prompt_toolkit's built-in emacs
-    # bindings register several, e.g. Alt+F/Alt+B word nav, even though this
-    # app's own key_bindings never use one). We don't rely on any of those,
-    # so there's nothing worth waiting for — flush immediately.
-    session.app.timeoutlen = 0
+        if prompt is not None:
+            # One-shot mode: run exactly one turn and exit — no
+            # PromptSession/toolbar (both assume an interactive terminal)
+            # and no REPL loop.
+            _run_and_persist(llm_with_tools, messages, prompt, console, initial_cwd, mode,
+                              images=_take_pending_images(), session=history_session)
+            # -p is meant to be deterministic/scriptable — a caller may read
+            # the session file the instant this process exits, so flush
+            # explicitly rather than relying on atexit's timing. The
+            # interactive REPL loop below doesn't get an equivalent
+            # per-turn flush (that would defeat the point of queuing at
+            # all) — it relies on atexit when it exits.
+            flush_pending_writes()
+            flush_pending_events()
+            return
 
-    while True:
-        console.print(Rule())
-        try:
-            user_input = session.prompt(
-                FormattedText([("fg:#ff8700 bold", "> ")]),
-            ).strip()
-        except (KeyboardInterrupt, EOFError):
-            console.print("\nBye!")
-            break
+        if not base_url:
+            # Local Ollama only — cloud/litellm models have no equivalent
+            # lookup. Fetched once here (not per turn, not per toolbar
+            # re-render) since it's static for the life of the process.
+            _ctx_limit_state["tokens"] = get_context_window(model)
 
-        if not user_input:
-            continue
-        if user_input.lower() in ("quit", "exit", "/exit", "/quit"):
-            console.print("Bye!")
-            break
+        _toolbar_style = Style.from_dict({
+            "bottom-toolbar": "bg:default fg:default noreverse",
+        })
+        session = PromptSession(
+            bottom_toolbar=_get_toolbar, style=_toolbar_style, key_bindings=_kb,
+            completer=AtPathCompleter(),
+            # Tab-triggered only — the default (True) pops a completion
+            # menu on every keystroke after "@" and fights the bottom
+            # toolbar for rows.
+            complete_while_typing=False,
+            # Default is 8 reserved rows, which is exactly the blank-line
+            # artifact the toolbar's fixed-height padding (above) exists to
+            # prevent. Keep this small and verify manually after any change
+            # here — see docs/manual-testing.md.
+            reserve_space_for_menu=4,
+        )
+        # prompt_toolkit's default timeoutlen (1.0s) waits after a lone Esc
+        # to see if it's actually the start of an Alt-combo sequence
+        # (Alt+key is sent as ESC + key on a raw terminal; prompt_toolkit's
+        # built-in emacs bindings register several, e.g. Alt+F/Alt+B word
+        # nav, even though this app's own key_bindings never use one). We
+        # don't rely on any of those, so there's nothing worth waiting for
+        # — flush immediately.
+        session.app.timeoutlen = 0
 
-        if user_input.lower().startswith("/image"):
+        while True:
+            console.print(Rule())
+            try:
+                user_input = session.prompt(
+                    FormattedText([("fg:#ff8700 bold", "> ")]),
+                ).strip()
+            except (KeyboardInterrupt, EOFError):
+                console.print("\nBye!")
+                break
+
+            if not user_input:
+                continue
+            if user_input.lower() in ("quit", "exit", "/exit", "/quit"):
+                console.print("Bye!")
+                break
+
+            if user_input.lower().startswith("/image"):
+                sys.stdout.write("\x1b[A\x1b[2K")
+                sys.stdout.flush()
+                _stage_image(user_input[len("/image"):].strip(), console, initial_cwd)
+                continue
+
+            text, mentioned = parse_image_mentions(user_input)
+            images = [resolve_image_path(p, initial_cwd)
+                      for p in _take_pending_images() + mentioned]
+
+            # Replace the typed line with the orange version
             sys.stdout.write("\x1b[A\x1b[2K")
             sys.stdout.flush()
-            _stage_image(user_input[len("/image"):].strip(), console, initial_cwd)
-            continue
+            console.print(f"[bold orange1]> {escape(user_input)}[/bold orange1]")
+            for p in images:
+                console.print(f"[dim]  [image: {escape(_display_path(p, initial_cwd))}][/dim]")
+            console.print()
 
-        text, mentioned = parse_image_mentions(user_input)
-        images = [resolve_image_path(p, initial_cwd)
-                  for p in _take_pending_images() + mentioned]
-
-        # Replace the typed line with the orange version
-        sys.stdout.write("\x1b[A\x1b[2K")
-        sys.stdout.flush()
-        console.print(f"[bold orange1]> {escape(user_input)}[/bold orange1]")
-        for p in images:
-            console.print(f"[dim]  [image: {escape(_display_path(p, initial_cwd))}][/dim]")
-        console.print()
-
-        _run_and_persist(llm_with_tools, messages, text, console, initial_cwd,
-                          _mode_state["mode"], images=images, session=history_session)
+            _run_and_persist(llm_with_tools, messages, text, console, initial_cwd,
+                              _mode_state["mode"], images=images, session=history_session)
+    except Exception as e:
+        # Genuine unexpected bugs only — the loop above already catches
+        # KeyboardInterrupt/EOFError itself (a clean exit, not an error) and
+        # never lets them escape to here. Re-raise after logging so today's
+        # crash/exit-code behavior is unchanged; this only adds a record.
+        log_cli_error(_session_state["id"], e)
+        raise

@@ -32,6 +32,7 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+import core.eventlog as eventlog
 import core.sessions as sessions
 import ui.repl as repl
 from core.sessions import (
@@ -47,18 +48,24 @@ from core.sessions import (
 )
 
 _ORIGINAL_SESSIONS_DIR = sessions.SESSIONS_DIR
+_ORIGINAL_LOGS_DIR = eventlog.LOGS_DIR
 _ORIGINAL_REPL_LOAD_LLM = repl.load_llm
 _ORIGINAL_REPL_RUN_TURN = repl.run_turn
 
 
 def _with_tmp_sessions_dir():
     """Context-manager-free helper: returns (tmpdir_obj, restore_fn). Callers
-    must call restore_fn() in a finally block."""
+    must call restore_fn() in a finally block. Also redirects
+    core.eventlog.LOGS_DIR alongside SESSIONS_DIR — any test that drives
+    ui.repl.main() (e.g. test_main_prompt_mode_writes_one_session_file)
+    triggers both, and neither should ever touch the real ~/.zeppeli/."""
     tmp = tempfile.TemporaryDirectory()
     sessions.SESSIONS_DIR = Path(tmp.name) / "sessions"
+    eventlog.LOGS_DIR = Path(tmp.name) / "logs"
 
     def restore():
         sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
+        eventlog.LOGS_DIR = _ORIGINAL_LOGS_DIR
         tmp.cleanup()
 
     return tmp, restore
@@ -413,7 +420,7 @@ def test_main_prompt_mode_writes_one_session_file():
     repl.load_llm = lambda **k: object()
 
     def _fake_run_turn(llm_with_tools, messages, user_input, console, initial_cwd,
-                        mode, images=None):
+                        mode, images=None, session_id=None, run_id=None):
         messages.append(HumanMessage(content=user_input))
         messages.append(AIMessage(content="hi back"))
 

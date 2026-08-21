@@ -2,7 +2,9 @@
 
 Used by ui/streaming.py (Markdown rendering) and core/sessions.py (history
 persistence), both of which need to flatten a LangChain message's `.content`
-into plain text before doing anything else with it.
+into plain text before doing anything else with it. Also used by
+core/eventlog.py (event logging) for the same reason, plus tool_result_ok()
+below for classifying a tool's ToolMessage output.
 """
 
 
@@ -25,3 +27,10 @@ def extract_text(content) -> str:
                 parts.append(item.get("text", ""))
         return "".join(parts)
     return ""
+
+
+def tool_result_ok(output: str) -> bool:
+    """core/tools.py's @tool functions signal failure by returning an
+    'Error: ...' string rather than raising; ui/turn.py's cancelled-
+    permission result contains 'CANCELLED'. Anything else is success."""
+    return not (output.startswith("Error:") or "CANCELLED" in output)

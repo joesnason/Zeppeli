@@ -5,6 +5,7 @@ from rich.live import Live
 from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
 
+from core.eventlog import log_model_activity
 from core.messages import extract_text as _extract_text
 
 _ctx_state = {"tokens": 0}
@@ -50,13 +51,20 @@ def _format_model_error(e: Exception) -> str:
     return f"{name}: {msg}"
 
 
-def stream_response(llm_with_tools, messages, console: Console):
+def stream_response(llm_with_tools, messages, console: Console, *,
+                     session_id: str | None = None, run_id: str | None = None,
+                     turn_index: int | None = None):
     """Show a 'Thinking...' spinner until the first content token arrives, then
     stream the rest of the response as live-updating Markdown. Returns the
     accumulated AIMessage (chunks merged), or None if the stream was empty or
     the model call raised (e.g. context window exceeded, network error) —
     the failure is reported to the console rather than propagating and
-    crashing the process."""
+    crashing the process.
+
+    When session_id/run_id/turn_index are all given (ui/turn.py's run_turn()
+    passes these through), logs one model_activity event for this hop after
+    a successful merge — skipped entirely if any of the three is None, so
+    other/test callers are unaffected."""
     chunks = []
     accumulated = ""
     try:
@@ -86,6 +94,14 @@ def stream_response(llm_with_tools, messages, console: Console):
     response = chunks[0]
     for c in chunks[1:]:
         response = response + c
+
+    if session_id is not None and run_id is not None and turn_index is not None:
+        log_model_activity(
+            session_id, run_id, index=turn_index,
+            finalization=not bool(response.tool_calls),
+            thinking=response.additional_kwargs.get("reasoning_content", "") or "",
+            content=_extract_text(response.content),
+        )
     return response
 
 
