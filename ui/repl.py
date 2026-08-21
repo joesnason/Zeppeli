@@ -17,7 +17,13 @@ from rich.markup import escape
 from rich.rule import Rule
 from langchain_core.messages import SystemMessage
 
-from core import MODEL as DEFAULT_MODEL, SYSTEM_PROMPT, load_llm, get_context_window
+from core import (
+    MODEL as DEFAULT_MODEL,
+    SYSTEM_PROMPT,
+    load_llm,
+    get_context_window,
+    model_supports_reasoning,
+)
 from core.eventlog import (
     build_turns_and_outputs,
     flush_pending_events,
@@ -135,7 +141,7 @@ def _take_pending_images() -> list[str]:
 
 
 def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
-                      mode, images, session):
+                      mode, images, session, reasoning=False):
     """Run one turn via run_turn(), then record it into `session` and write
     it to disk. Wraps run_turn() rather than modifying it, so ui/turn.py
     keeps no knowledge of persistence — this is the only place that needs
@@ -157,7 +163,7 @@ def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
 
     t0 = time.monotonic()
     run_turn(llm_with_tools, messages, user_input, console, initial_cwd, mode, images=images,
-              session_id=_session_state["id"], run_id=run.id)
+              session_id=_session_state["id"], run_id=run.id, reasoning=reasoning)
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     try:
@@ -256,9 +262,28 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
     # too, not just what comes after a successful load.
     provider = "litellm" if base_url else "ollama"
     ollama_url = None if base_url else os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+    # ChatOllama accepts a per-call reasoning=True kwarg (ui/streaming.py's
+    # stream_response()) that separates the model's thinking into
+    # additional_kwargs["reasoning_content"] instead of folding it into the
+    # visible response — see docs/logging.md. No equivalent exists for
+    # cloud/self-hosted models via litellm (--base-url). For local Ollama,
+    # model_supports_reasoning() checks the model's own advertised
+    # capabilities (via ollama.show()) up front, so an unsupported model is
+    # never asked in the first place — ui/streaming.py's stream_response()
+    # still carries a reactive fallback too, as a safety net.
+    if base_url is not None:
+        reasoning_enabled = False
+        reasoning_mode = "unavailable"
+    elif model_supports_reasoning(model):
+        reasoning_enabled = True
+        reasoning_mode = "enabled"
+    else:
+        reasoning_enabled = False
+        reasoning_mode = "unsupported"
     log_session_started(_session_state["id"], cwd=initial_cwd, provider=provider,
                          model=_model_state["name"], ollama_url=ollama_url,
-                         pid=os.getpid(), platform=platform.system().lower())
+                         pid=os.getpid(), platform=platform.system().lower(),
+                         reasoning_mode=reasoning_mode)
 
     try:
         llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key)
@@ -278,7 +303,8 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
             # PromptSession/toolbar (both assume an interactive terminal)
             # and no REPL loop.
             _run_and_persist(llm_with_tools, messages, prompt, console, initial_cwd, mode,
-                              images=_take_pending_images(), session=history_session)
+                              images=_take_pending_images(), session=history_session,
+                              reasoning=reasoning_enabled)
             # -p is meant to be deterministic/scriptable — a caller may read
             # the session file the instant this process exits, so flush
             # explicitly rather than relying on atexit's timing. The
@@ -355,7 +381,8 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
             console.print()
 
             _run_and_persist(llm_with_tools, messages, text, console, initial_cwd,
-                              _mode_state["mode"], images=images, session=history_session)
+                              _mode_state["mode"], images=images, session=history_session,
+                              reasoning=reasoning_enabled)
     except Exception as e:
         # Genuine unexpected bugs only — the loop above already catches
         # KeyboardInterrupt/EOFError itself (a clean exit, not an error) and

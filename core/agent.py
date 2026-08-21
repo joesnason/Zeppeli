@@ -64,3 +64,25 @@ def get_context_window(model: str | None = None) -> int | None:
             except (TypeError, ValueError):
                 return None
     return None
+
+
+def model_supports_reasoning(model: str | None = None) -> bool:
+    """Look up whether a local-Ollama model supports reasoning/thinking
+    mode, via ollama.show()'s `capabilities` list (contains "thinking" iff
+    the model supports it — this is Ollama's own upfront capability
+    declaration, not a guess). Returns False on any failure (Ollama
+    unreachable, unknown model, unexpected response shape) — never raises,
+    and this being the gate ui/repl.py's main() checks before ever passing
+    reasoning=True means an unsupported model is never asked in the first
+    place, rather than relying solely on catching the resulting error.
+    Not meaningful for cloud/litellm models; callers should only invoke
+    this when base_url is not set.
+    """
+    import ollama  # lazy: mirrors get_context_window()'s own lazy import
+
+    try:
+        info = ollama.show(model or MODEL)
+    except Exception:
+        return False
+
+    return "thinking" in (info.capabilities or [])

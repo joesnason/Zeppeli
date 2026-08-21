@@ -3,7 +3,7 @@
 No UI dependencies (no Rich, no prompt_toolkit). See ui/ for the interactive layer.
 """
 
-from .agent import MODEL, SYSTEM_PROMPT, load_llm, get_context_window
+from .agent import MODEL, SYSTEM_PROMPT, load_llm, get_context_window, model_supports_reasoning
 from .tools import (
     TOOLS,
     TOOLS_BY_NAME,
@@ -65,6 +65,7 @@ __all__ = [
     "SYSTEM_PROMPT",
     "load_llm",
     "get_context_window",
+    "model_supports_reasoning",
     "TOOLS",
     "TOOLS_BY_NAME",
     "PATH_ARGS",

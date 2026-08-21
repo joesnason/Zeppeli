@@ -10,6 +10,16 @@ from core.messages import extract_text as _extract_text
 
 _ctx_state = {"tokens": 0}
 
+# Set once, the first time a reasoning=True stream call raises — remembered
+# for the rest of the process so later turns skip straight to a plain call
+# instead of re-attempting (and re-failing) reasoning mode every single hop.
+# ui/repl.py's main() already gates reasoning=True on
+# core.agent.model_supports_reasoning() (checks ollama.show()'s advertised
+# capabilities up front), so this should rarely trigger in practice — it's
+# a safety net for whatever that upfront check can't see (a stale/wrong
+# capabilities list, an Ollama version quirk), not the primary guard.
+_reasoning_unsupported = {"flag": False}
+
 
 def _format_model_error(e: Exception) -> str:
     """Render an exception from the model call as a short, readable message.
@@ -51,9 +61,36 @@ def _format_model_error(e: Exception) -> str:
     return f"{name}: {msg}"
 
 
+def _consume_stream(llm_with_tools, messages, console: Console, *, reasoning: bool) -> list:
+    """Runs the spinner-then-Live-Markdown loop, consuming llm_with_tools's
+    stream. Returns the list of raw chunks (possibly empty if the stream
+    yielded nothing). Raises whatever the model call raises — the caller
+    decides how to handle it (stream_response() below)."""
+    chunks = []
+    accumulated = ""
+    stream = llm_with_tools.stream(messages, reasoning=True) if reasoning else llm_with_tools.stream(messages)
+
+    with console.status("[dim]Thinking...[/dim]", spinner="dots"):
+        for chunk in stream:
+            chunks.append(chunk)
+            text = _extract_text(chunk.content)
+            if text:
+                accumulated = text
+                break
+
+    with Live(RichMarkdown(accumulated), console=console, refresh_per_second=15) as live:
+        for chunk in stream:
+            text = _extract_text(chunk.content)
+            if text:
+                accumulated += text
+                live.update(RichMarkdown(accumulated))
+            chunks.append(chunk)
+    return chunks
+
+
 def stream_response(llm_with_tools, messages, console: Console, *,
                      session_id: str | None = None, run_id: str | None = None,
-                     turn_index: int | None = None):
+                     turn_index: int | None = None, reasoning: bool = False):
     """Show a 'Thinking...' spinner until the first content token arrives, then
     stream the rest of the response as live-updating Markdown. Returns the
     accumulated AIMessage (chunks merged), or None if the stream was empty or
@@ -61,33 +98,36 @@ def stream_response(llm_with_tools, messages, console: Console, *,
     the failure is reported to the console rather than propagating and
     crashing the process.
 
+    reasoning=True (ui/repl.py's main() sets this for local Ollama models
+    that advertise reasoning support, via ui/turn.py's run_turn() — see
+    core.agent.model_supports_reasoning()) asks ChatOllama to separate the
+    model's reasoning/thinking into additional_kwargs["reasoning_content"]
+    instead of folding it into the visible response — see docs/logging.md.
+    If the loaded model/backend doesn't actually support it despite that
+    upfront check, the first attempt's exception is treated as possibly
+    reasoning-related: this retries once without reasoning before giving
+    up, and remembers not to try reasoning again for the rest of the
+    process (_reasoning_unsupported), so later turns don't pay the same
+    failed-attempt cost every hop.
+
     When session_id/run_id/turn_index are all given (ui/turn.py's run_turn()
     passes these through), logs one model_activity event for this hop after
     a successful merge — skipped entirely if any of the three is None, so
     other/test callers are unaffected."""
-    chunks = []
-    accumulated = ""
+    use_reasoning = reasoning and not _reasoning_unsupported["flag"]
     try:
-        stream = llm_with_tools.stream(messages)
-
-        with console.status("[dim]Thinking...[/dim]", spinner="dots"):
-            for chunk in stream:
-                chunks.append(chunk)
-                text = _extract_text(chunk.content)
-                if text:
-                    accumulated = text
-                    break
-
-        with Live(RichMarkdown(accumulated), console=console, refresh_per_second=15) as live:
-            for chunk in stream:
-                text = _extract_text(chunk.content)
-                if text:
-                    accumulated += text
-                    live.update(RichMarkdown(accumulated))
-                chunks.append(chunk)
+        chunks = _consume_stream(llm_with_tools, messages, console, reasoning=use_reasoning)
     except Exception as e:
-        console.print(f"[red]Error: {escape(_format_model_error(e))}[/red]")
-        return None
+        if use_reasoning:
+            _reasoning_unsupported["flag"] = True
+            try:
+                chunks = _consume_stream(llm_with_tools, messages, console, reasoning=False)
+            except Exception as e2:
+                console.print(f"[red]Error: {escape(_format_model_error(e2))}[/red]")
+                return None
+        else:
+            console.print(f"[red]Error: {escape(_format_model_error(e))}[/red]")
+            return None
 
     if not chunks:
         return None

@@ -13,7 +13,8 @@ from .permissions import MODE_APPROVAL, build_pre_tool_hooks, reset_turn_approva
 def run_turn(llm_with_tools, messages, user_input: str, console: Console,
              initial_cwd: str = ".", mode: str = MODE_APPROVAL,
              images: list[str] | None = None,
-             session_id: str | None = None, run_id: str | None = None):
+             session_id: str | None = None, run_id: str | None = None,
+             reasoning: bool = False):
     reset_turn_approvals()
     hooks = build_pre_tool_hooks(mode, initial_cwd)
     try:
@@ -24,7 +25,8 @@ def run_turn(llm_with_tools, messages, user_input: str, console: Console,
     messages.append(HumanMessage(content=content))
     turn_index = 0
     response = stream_response(llm_with_tools, messages, console,
-                                session_id=session_id, run_id=run_id, turn_index=turn_index)
+                                session_id=session_id, run_id=run_id, turn_index=turn_index,
+                                reasoning=reasoning)
     if response is None:
         return
     messages.append(response)
@@ -47,7 +49,8 @@ def run_turn(llm_with_tools, messages, user_input: str, console: Console,
                 result = TOOLS_BY_NAME[tc["name"]].invoke(resolved_args)
             messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
         response = stream_response(llm_with_tools, messages, console,
-                                    session_id=session_id, run_id=run_id, turn_index=turn_index)
+                                    session_id=session_id, run_id=run_id, turn_index=turn_index,
+                                    reasoning=reasoning)
         if response is None:
             return
         messages.append(response)

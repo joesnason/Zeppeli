@@ -1,8 +1,10 @@
 """Automated tests for cloud-model configuration (--base-url/--model/
 --api-key and their LITELLM_* env-var fallbacks) plus core.agent.load_llm()'s
-backend-branching logic and core.agent.get_context_window()'s modelinfo
-key-matching/error-handling. No Ollama/network dependency — safe to run
-anytime, exits non-zero on failure. Style matches test_permission_modes.py.
+backend-branching logic, core.agent.get_context_window()'s modelinfo
+key-matching/error-handling, and core.agent.model_supports_reasoning()'s
+capabilities-list check/error-handling. No Ollama/network dependency — safe
+to run anytime, exits non-zero on failure. Style matches
+test_permission_modes.py.
 """
 
 import os
@@ -247,6 +249,80 @@ def test_get_context_window_returns_none_on_exception():
         del sys.modules["ollama"]
 
 
+# --- core/agent.py: model_supports_reasoning() ------------------------------
+
+def test_model_supports_reasoning_true_when_thinking_in_capabilities():
+    class _FakeShowResponse:
+        capabilities = ["completion", "tools", "thinking"]
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = lambda model: _FakeShowResponse()
+    sys.modules["ollama"] = fake_module
+    try:
+        assert agent.model_supports_reasoning("gemma4:26b-nvfp4") is True
+    finally:
+        del sys.modules["ollama"]
+
+
+def test_model_supports_reasoning_false_when_thinking_absent():
+    class _FakeShowResponse:
+        capabilities = ["completion", "tools"]
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = lambda model: _FakeShowResponse()
+    sys.modules["ollama"] = fake_module
+    try:
+        assert agent.model_supports_reasoning("llama3.1:8b") is False
+    finally:
+        del sys.modules["ollama"]
+
+
+def test_model_supports_reasoning_false_when_capabilities_absent():
+    class _FakeShowResponse:
+        capabilities = None
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = lambda model: _FakeShowResponse()
+    sys.modules["ollama"] = fake_module
+    try:
+        assert agent.model_supports_reasoning("x") is False
+    finally:
+        del sys.modules["ollama"]
+
+
+def test_model_supports_reasoning_defaults_model_to_MODEL_constant():
+    seen = {}
+
+    class _FakeShowResponse:
+        capabilities = ["thinking"]
+
+    def _spy_show(model):
+        seen["model"] = model
+        return _FakeShowResponse()
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = _spy_show
+    sys.modules["ollama"] = fake_module
+    try:
+        agent.model_supports_reasoning()
+        assert seen["model"] == agent.MODEL
+    finally:
+        del sys.modules["ollama"]
+
+
+def test_model_supports_reasoning_returns_false_on_exception():
+    def _raising_show(model):
+        raise ConnectionError("no route to host")
+
+    fake_module = types.ModuleType("ollama")
+    fake_module.show = _raising_show
+    sys.modules["ollama"] = fake_module
+    try:
+        assert agent.model_supports_reasoning("x") is False
+    finally:
+        del sys.modules["ollama"]
+
+
 TESTS = [
     test_resolve_config_base_url_without_model_raises_systemexit_2,
     test_resolve_config_base_url_with_model_flag_ok,
@@ -265,6 +341,11 @@ TESTS = [
     test_get_context_window_returns_none_when_no_context_length_key,
     test_get_context_window_returns_none_when_modelinfo_absent,
     test_get_context_window_returns_none_on_exception,
+    test_model_supports_reasoning_true_when_thinking_in_capabilities,
+    test_model_supports_reasoning_false_when_thinking_absent,
+    test_model_supports_reasoning_false_when_capabilities_absent,
+    test_model_supports_reasoning_defaults_model_to_MODEL_constant,
+    test_model_supports_reasoning_returns_false_on_exception,
 ]
 
 

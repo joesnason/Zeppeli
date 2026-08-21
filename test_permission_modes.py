@@ -48,11 +48,13 @@ from ui.permissions import (
 )
 
 # Captured before any test can monkeypatch permissions.permission_ask /
-# _arrow_menu, or ui.repl's confirm_auto_mode_trust / load_llm / run_turn.
+# _arrow_menu, or ui.repl's confirm_auto_mode_trust / load_llm / run_turn /
+# model_supports_reasoning.
 _ORIGINAL_PERMISSION_ASK = permissions.permission_ask
 _ORIGINAL_ARROW_MENU = permissions._arrow_menu
 _ORIGINAL_CONFIRM_AUTO_MODE_TRUST = repl.confirm_auto_mode_trust
 _ORIGINAL_REPL_LOAD_LLM = repl.load_llm
+_ORIGINAL_REPL_MODEL_SUPPORTS_REASONING = repl.model_supports_reasoning
 _ORIGINAL_REPL_RUN_TURN = repl.run_turn
 _ORIGINAL_SESSIONS_DIR = sessions.SESSIONS_DIR
 _ORIGINAL_LOGS_DIR = eventlog.LOGS_DIR
@@ -207,6 +209,7 @@ def test_main_prompt_mode_skips_trust_check():
     repl.confirm_auto_mode_trust = _spy
     repl.load_llm = lambda **k: object()
     repl.run_turn = lambda *a, **k: None
+    repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
     with tempfile.TemporaryDirectory() as tmp:
         sessions.SESSIONS_DIR = Path(tmp) / "sessions"
         eventlog.LOGS_DIR = Path(tmp) / "logs"
@@ -216,6 +219,7 @@ def test_main_prompt_mode_skips_trust_check():
             repl.confirm_auto_mode_trust = _ORIGINAL_CONFIRM_AUTO_MODE_TRUST
             repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
             repl.run_turn = _ORIGINAL_REPL_RUN_TURN
+            repl.model_supports_reasoning = _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING
             sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
             eventlog.LOGS_DIR = _ORIGINAL_LOGS_DIR
 
@@ -238,6 +242,7 @@ def test_clear_input_esc_noop_on_empty_buffer():
 def test_main_seeds_unique_session_id():
     repl.load_llm = lambda **k: object()
     repl.run_turn = lambda *a, **k: None
+    repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
     with tempfile.TemporaryDirectory() as tmp:
         sessions.SESSIONS_DIR = Path(tmp) / "sessions"
         eventlog.LOGS_DIR = Path(tmp) / "logs"
@@ -249,6 +254,7 @@ def test_main_seeds_unique_session_id():
         finally:
             repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
             repl.run_turn = _ORIGINAL_REPL_RUN_TURN
+            repl.model_supports_reasoning = _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING
             sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
             eventlog.LOGS_DIR = _ORIGINAL_LOGS_DIR
 

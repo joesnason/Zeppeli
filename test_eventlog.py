@@ -47,6 +47,7 @@ from ui.streaming import stream_response
 _ORIGINAL_LOGS_DIR = eventlog.LOGS_DIR
 _ORIGINAL_SESSIONS_DIR = sessions.SESSIONS_DIR
 _ORIGINAL_REPL_LOAD_LLM = repl.load_llm
+_ORIGINAL_REPL_MODEL_SUPPORTS_REASONING = repl.model_supports_reasoning
 
 
 def _with_tmp_logs_dir():
@@ -85,7 +86,8 @@ def test_log_session_started_shape():
     try:
         sid = "sess-1"
         log_session_started(sid, cwd="/x/y", provider="ollama", model="gemma4:26b",
-                             ollama_url="http://127.0.0.1:11434", pid=123, platform="darwin")
+                             ollama_url="http://127.0.0.1:11434", pid=123, platform="darwin",
+                             reasoning_mode="enabled")
         flush_pending_events()
         lines = _read_lines(sid)
         assert len(lines) == 1
@@ -99,8 +101,22 @@ def test_log_session_started_shape():
         assert line["data"]["ollamaUrl"] == "http://127.0.0.1:11434"
         assert line["data"]["pid"] == 123
         assert line["data"]["platform"] == "darwin"
+        assert line["data"]["reasoningMode"] == "enabled"
         assert line["data"]["recoveredInterruptedRuns"] == 0
         assert "maxTurns" not in line["data"]
+    finally:
+        restore()
+
+
+def test_log_session_started_reasoning_mode_defaults_to_unavailable():
+    tmp, restore = _with_tmp_logs_dir()
+    try:
+        sid = "sess-1b"
+        log_session_started(sid, cwd="/x/y", provider="litellm", model="gpt-4o-mini",
+                             ollama_url=None, pid=123, platform="darwin")
+        flush_pending_events()
+        line = _read_lines(sid)[0]
+        assert line["data"]["reasoningMode"] == "unavailable"
     finally:
         restore()
 
@@ -410,6 +426,7 @@ def test_main_logs_cli_error_on_uncaught_exception():
         raise RuntimeError("simulated load_llm failure")
 
     repl.load_llm = _boom
+    repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
     try:
         try:
             repl.main(mode="approval", prompt="hi")
@@ -426,6 +443,7 @@ def test_main_logs_cli_error_on_uncaught_exception():
         assert "simulated load_llm failure" in cli_errors[0]["data"]["message"]
     finally:
         repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
+        repl.model_supports_reasoning = _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING
         sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
         sessions_tmp.cleanup()
         restore()
@@ -434,6 +452,7 @@ def test_main_logs_cli_error_on_uncaught_exception():
 TESTS = [
     test_log_path_uses_full_session_id,
     test_log_session_started_shape,
+    test_log_session_started_reasoning_mode_defaults_to_unavailable,
     test_log_run_started_shape,
     test_log_run_started_preview_is_truncated,
     test_log_model_activity_shape,

@@ -32,10 +32,15 @@ Design notes (mirrors core/sessions.py's write-up):
   no torn-write risk to guard against with atomic-replace machinery.
 
 Known limitations (see docs/logging.md):
-- model_activity's "thinking" field is best-effort only: nothing in this
-  codebase requests reasoning=True from the model today, so
-  additional_kwargs["reasoning_content"] is usually empty. See
-  docs/logging.md for the planned follow-up.
+- model_activity's "thinking" field is populated for local Ollama runs on
+  a model that advertises reasoning support (ui/repl.py's main() checks
+  core.agent.model_supports_reasoning() up front, via ollama.show()'s
+  capabilities list, then enables reasoning=True through ui/streaming.py's
+  stream_response() — which also carries an automatic once-per-process
+  fallback as a safety net, in case that upfront check was wrong). Cloud/
+  self-hosted models via --base-url have no equivalent, so "thinking" is
+  always empty for those; session_started.reasoningMode is "unsupported"
+  for a local model that doesn't advertise the capability.
 - session_started has no "maxTurns" field — run_turn()'s tool-call loop is
   genuinely unbounded, no such config exists in this CLI.
 - "recoveredInterruptedRuns" is always 0 — this codebase has no
@@ -131,7 +136,8 @@ def _envelope(event_type: str, session_id: str, data: dict, run_id: str | None =
 
 
 def log_session_started(session_id: str, *, cwd: str, provider: str, model: str | None,
-                          ollama_url: str | None, pid: int, platform: str) -> None:
+                          ollama_url: str | None, pid: int, platform: str,
+                          reasoning_mode: str = "unavailable") -> None:
     _emit(session_id, _envelope("session_started", session_id, {
         "cwd": cwd,
         "provider": provider,
@@ -139,7 +145,7 @@ def log_session_started(session_id: str, *, cwd: str, provider: str, model: str 
         "ollamaUrl": ollama_url,
         "platform": platform,
         "pid": pid,
-        "reasoningMode": "auto",
+        "reasoningMode": reasoning_mode,
         "recoveredInterruptedRuns": 0,
     }))
 

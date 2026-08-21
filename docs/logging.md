@@ -51,7 +51,7 @@ this event's sibling, `cli_error`, needs to be able to report.
     "ollamaUrl": "http://127.0.0.1:11434",  // OLLAMA_HOST env var or the client default; null when provider is "litellm"
     "platform": "darwin",
     "pid": 12345,
-    "reasoningMode": "auto",    // placeholder — see "Known limitations" below
+    "reasoningMode": "enabled",  // "enabled" for local Ollama, "unavailable" for cloud/litellm
     "recoveredInterruptedRuns": 0  // always 0 — see "Known limitations" below
   }
 }
@@ -85,14 +85,16 @@ answer).
   "data": {
     "index": 0,
     "finalization": false,
-    "chunk": { "thinking": "", "content": "", "done": true }
+    "chunk": { "thinking": "The user wants X, so I should call tool Y first...", "content": "", "done": true }
   }
 }
 ```
 
 `chunk.thinking` reads `additional_kwargs["reasoning_content"]` off the
-merged `AIMessage` — see "Known limitations" below for why this is
-usually empty today.
+merged `AIMessage`. For local Ollama, `ui/repl.py`'s `main()` asks
+`ui/streaming.py`'s `stream_response()` to pass `reasoning=True` to
+`ChatOllama`'s `.stream()` calls, which is what actually populates this
+field — see "Known limitations" below for when it's empty instead.
 
 ### `run_completed`
 
@@ -116,8 +118,8 @@ Logged once per turn, right after the run is classified
       { "kind": "final", "content": "the final answer text" }
     ],
     "modelOutputs": [
-      { "index": 0, "finalization": false, "contentChars": 0, "thinkingChars": 0, "done": true },
-      { "index": 1, "finalization": true, "contentChars": 28, "thinkingChars": 0, "done": true }
+      { "index": 0, "finalization": false, "contentChars": 0, "thinkingChars": 118, "done": true },
+      { "index": 1, "finalization": true, "contentChars": 28, "thinkingChars": 64, "done": true }
     ]
     // "error": "..." — present only when completionStatus is "failed"
   }
@@ -175,19 +177,23 @@ of rewriting a whole JSON document:
 
 ## Known limitations
 
-- **`chunk.thinking` is best-effort and usually empty today.** Nothing in
-  this codebase currently passes `reasoning=True` to `ChatOllama`'s
-  `.stream()` calls, so a reasoning-capable model's think-tags stay folded
-  into the normal visible response text rather than being surfaced
-  separately in `additional_kwargs["reasoning_content"]`. This was a
-  deliberate choice to ship the event log with zero change to
-  `load_llm()`/streaming behavior or what's rendered in chat. **Planned
-  follow-up**: try actively enabling `reasoning=True` on `ChatOllama`'s
-  `.stream()` calls (`ui/streaming.py`/`core/agent.py::load_llm()`) to see
-  whether it changes what gets captured, once this base logging has proven
-  out.
-- **`session_started.reasoningMode` is a placeholder**, hardcoded to
-  `"auto"` — there's no real reasoning-mode toggle yet (see above).
+- **`chunk.thinking` is only populated for local Ollama.** `ui/repl.py`'s
+  `main()` computes `reasoning_enabled = base_url is None` once at startup
+  and threads it through `_run_and_persist()` → `run_turn()` →
+  `stream_response()`, which passes `reasoning=True` to `ChatOllama`'s
+  `.stream()` calls when it's set. Manually verified (2026-08-21) against
+  `gemma4:26b-nvfp4`: this genuinely separates the model's reasoning into
+  `additional_kwargs["reasoning_content"]` without changing the visible
+  response, and works fine together with tool-calling (a hop that ends in
+  a tool call still gets real `thinking` text, e.g. explaining *why* it's
+  calling that tool). If the loaded model doesn't actually support
+  reasoning mode, the first attempt's exception is treated as possibly
+  reasoning-related: `stream_response()` retries once without it, and
+  remembers not to try again for the rest of the process
+  (`ui/streaming.py`'s `_reasoning_unsupported`) — so a genuinely
+  unsupported model costs one extra failed attempt on the very first hop,
+  not every hop of every turn. Cloud/self-hosted models via `--base-url`
+  have no equivalent, so `chunk.thinking` is always empty for those.
 - **`session_started.recoveredInterruptedRuns` is always `0`.** This
   codebase has no session-resume concept — every process starts a fresh
   session id/log file, so there's never anything to "recover."
@@ -203,9 +209,10 @@ of rewriting a whole JSON document:
 ## Testing
 
 `test_eventlog.py` covers every event type's JSONL shape (including
-`run_completed`'s completed/failed variants and `cli_error`'s
-message-length cap), `build_turns_and_outputs()` (single and multiple tool
-calls in one hop, a final no-tool-call answer, thinking-chars from
+`run_completed`'s completed/failed variants, `cli_error`'s message-length
+cap, and `session_started.reasoningMode`'s `"enabled"`/`"unavailable"`
+values), `build_turns_and_outputs()` (single and multiple tool calls in
+one hop, a final no-tool-call answer, thinking-chars from
 `additional_kwargs`), the write queue itself (non-blocking, FIFO order,
 the writer thread surviving a bad write, `flush_pending_events()` on an
 empty queue), `ui/streaming.py`'s `stream_response()` only emitting
@@ -217,7 +224,19 @@ network dependency. `test_sessions.py` and `test_permission_modes.py`'s
 existing tests that call `repl.main()` for real also redirect `LOGS_DIR`
 for the same reason.
 
+`test_streaming.py` separately covers the `reasoning=True` mechanics
+itself: it's passed when requested and omitted by default, the
+once-per-process fallback (`_reasoning_unsupported`) when the first
+attempt raises, that the fallback is remembered across later calls (no
+repeated failed retry), and that a failure in both the reasoning attempt
+and its fallback still reports an error and returns `None` like before —
+all with a fake LLM, no Ollama dependency.
+
 Manually verified (2026-08-21): a live `-p` run against local Ollama
 produces `session_started` → `run_started` → one `model_activity` per hop
 → `run_completed`, with `turns`/`modelOutputs`/`stats` matching what
-actually happened (one `list_files` tool call, then a final answer).
+actually happened (one `list_files` tool call, then a final answer). A
+second live run with `reasoning=True` wired in (a decimal-comparison
+question, `9.11` vs `9.9`) confirmed `session_started.reasoningMode:
+"enabled"` and a populated `chunk.thinking` with genuine step-by-step
+reasoning, while the visible chat response stayed clean.

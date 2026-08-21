@@ -23,8 +23,10 @@ Regression coverage for two separate bugs:
 import io
 import sys
 
+from langchain_core.messages import AIMessageChunk
 from rich.console import Console
 
+import ui.streaming as streaming
 from ui.streaming import _extract_text, _format_model_error, stream_response
 
 
@@ -130,6 +132,82 @@ def test_stream_response_returns_none_on_raise_instead_of_propagating():
     assert "connection reset" in console.file.getvalue()
 
 
+class _ReasoningAwareLLM:
+    """Stands in for llm_with_tools: records whether reasoning=True was
+    passed on each .stream() call (self.calls, one bool per call — True iff
+    reasoning=True was explicitly passed) and yields a trivial one-chunk
+    response. fail_when_reasoning=True raises instead, on any call that
+    passes reasoning=True — simulating a model/backend that doesn't
+    support it."""
+
+    def __init__(self, fail_when_reasoning=False):
+        self.fail_when_reasoning = fail_when_reasoning
+        self.calls = []
+
+    def stream(self, messages, reasoning=None):
+        used_reasoning = reasoning is True
+        self.calls.append(used_reasoning)
+        if used_reasoning and self.fail_when_reasoning:
+            raise RuntimeError("this model does not support reasoning mode")
+        return iter([AIMessageChunk(content="ok")])
+
+
+def test_stream_response_passes_reasoning_true_when_requested():
+    streaming._reasoning_unsupported["flag"] = False
+    console = Console(file=io.StringIO())
+    llm = _ReasoningAwareLLM()
+    result = stream_response(llm, [], console, reasoning=True)
+    assert result is not None
+    assert llm.calls == [True]
+
+
+def test_stream_response_reasoning_false_by_default():
+    streaming._reasoning_unsupported["flag"] = False
+    console = Console(file=io.StringIO())
+    llm = _ReasoningAwareLLM()
+    result = stream_response(llm, [], console)  # reasoning param omitted
+    assert result is not None
+    assert llm.calls == [False]
+
+
+def test_stream_response_falls_back_when_reasoning_unsupported():
+    streaming._reasoning_unsupported["flag"] = False
+    console = Console(file=io.StringIO())
+    llm = _ReasoningAwareLLM(fail_when_reasoning=True)
+    try:
+        result = stream_response(llm, [], console, reasoning=True)
+        assert result is not None, "should have recovered via the plain retry"
+        assert llm.calls == [True, False]  # first attempt with reasoning, then plain
+        assert streaming._reasoning_unsupported["flag"] is True
+    finally:
+        streaming._reasoning_unsupported["flag"] = False  # don't leak into later tests
+
+
+def test_stream_response_remembers_reasoning_unsupported_across_calls():
+    streaming._reasoning_unsupported["flag"] = True  # simulate a prior failed attempt
+    console = Console(file=io.StringIO())
+    llm = _ReasoningAwareLLM(fail_when_reasoning=True)
+    try:
+        result = stream_response(llm, [], console, reasoning=True)
+        assert result is not None
+        assert llm.calls == [False]  # skipped straight to plain — no repeated failed retry
+    finally:
+        streaming._reasoning_unsupported["flag"] = False
+
+
+def test_stream_response_returns_none_when_reasoning_and_fallback_both_fail():
+    streaming._reasoning_unsupported["flag"] = False
+    console = Console(file=io.StringIO())
+    llm = _RaisingLLM(RuntimeError("connection reset"))  # raises regardless of kwargs
+    try:
+        result = stream_response(llm, [], console, reasoning=True)
+        assert result is None
+        assert "connection reset" in console.file.getvalue()
+        assert streaming._reasoning_unsupported["flag"] is True  # still marked, first attempt used reasoning
+    finally:
+        streaming._reasoning_unsupported["flag"] = False
+
+
 TESTS = [
     test_extract_text_plain_str,
     test_extract_text_empty_str,
@@ -144,6 +222,11 @@ TESTS = [
     test_format_model_error_generic_image_word_alone_does_not_trigger_vision_hint,
     test_format_model_error_vllm_zero_image_limit_gets_friendly_hint,
     test_stream_response_returns_none_on_raise_instead_of_propagating,
+    test_stream_response_passes_reasoning_true_when_requested,
+    test_stream_response_reasoning_false_by_default,
+    test_stream_response_falls_back_when_reasoning_unsupported,
+    test_stream_response_remembers_reasoning_unsupported_across_calls,
+    test_stream_response_returns_none_when_reasoning_and_fallback_both_fail,
 ]
 
 
