@@ -26,7 +26,7 @@ from .images import (
     load_image_block,
     build_message_content,
 )
-from .messages import extract_text, tool_result_ok
+from .messages import extract_text, tool_result_ok, truncate_tool_output, compact_messages
 from .eventlog import (
     LOGS_DIR,
     log_path,
@@ -86,6 +86,8 @@ __all__ = [
     "build_message_content",
     "extract_text",
     "tool_result_ok",
+    "truncate_tool_output",
+    "compact_messages",
     "LOGS_DIR",
     "log_path",
     "build_turns_and_outputs",

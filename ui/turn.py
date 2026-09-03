@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 
 from core import TOOLS_BY_NAME, resolve_paths
 from core.images import ImageError, build_message_content
+from core.messages import truncate_tool_output
 from .streaming import stream_response, _update_ctx
 from .permissions import MODE_APPROVAL, build_pre_tool_hooks, reset_turn_approvals
 
@@ -47,7 +48,12 @@ def run_turn(llm_with_tools, messages, user_input: str, console: Console,
                 )
             else:
                 result = TOOLS_BY_NAME[tc["name"]].invoke(resolved_args)
-            messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+            full_output = str(result)
+            messages.append(ToolMessage(
+                content=truncate_tool_output(full_output),
+                tool_call_id=tc["id"],
+                additional_kwargs={"full_output": full_output},
+            ))
         response = stream_response(llm_with_tools, messages, console,
                                     session_id=session_id, run_id=run_id, turn_index=turn_index,
                                     reasoning=reasoning)

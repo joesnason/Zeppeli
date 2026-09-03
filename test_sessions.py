@@ -194,6 +194,24 @@ def test_append_history_tool_message_cancelled_is_not_ok():
     assert s.history[0].toolResult.ok is False
 
 
+def test_append_history_tool_message_prefers_full_output():
+    s = _fresh_session()
+    tm = ToolMessage(
+        content="[truncated 20 lines]",
+        tool_call_id="call_1",
+        additional_kwargs={"full_output": "the full untruncated output"},
+    )
+    append_history_from_messages(s, [tm], 0)
+    assert s.history[0].toolResult.output == "the full untruncated output"
+
+
+def test_append_history_tool_message_falls_back_to_content_without_full_output():
+    s = _fresh_session()
+    tm = ToolMessage(content="ok", tool_call_id="call_1")
+    append_history_from_messages(s, [tm], 0)
+    assert s.history[0].toolResult.output == "ok"
+
+
 def test_append_history_start_index_offset():
     s = _fresh_session()
     messages = [SystemMessage(content="sys"), HumanMessage(content="first"),
@@ -457,6 +475,8 @@ TESTS = [
     test_append_history_tool_message_ok,
     test_append_history_tool_message_error_is_not_ok,
     test_append_history_tool_message_cancelled_is_not_ok,
+    test_append_history_tool_message_prefers_full_output,
+    test_append_history_tool_message_falls_back_to_content_without_full_output,
     test_append_history_start_index_offset,
     test_finish_run_completed,
     test_finish_run_completed_counts_tool_calls_across_hops,

@@ -275,7 +275,7 @@ def append_history_from_messages(session: StoredSession, messages: list, start_i
             session.history.append(StoredSessionMessage(
                 role="user", content=extract_text(m.content), timestamp=_now_iso()))
         elif isinstance(m, ToolMessage):
-            output = str(m.content)
+            output = str(m.additional_kwargs.get("full_output", m.content))
             session.history.append(StoredSessionMessage(
                 role="tool", content=output, timestamp=_now_iso(),
                 toolResult=ToolResultInfo(ok=tool_result_ok(output), output=output)))

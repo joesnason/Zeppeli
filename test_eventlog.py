@@ -290,6 +290,28 @@ def test_build_turns_tool_hop_then_final_hop():
     assert outputs[1]["index"] == 1 and outputs[1]["finalization"] is True
 
 
+def test_build_turns_prefers_full_output():
+    ai = AIMessage(content="", tool_calls=[
+        {"name": "list_files", "args": {}, "id": "call_1"},
+    ])
+    tm = ToolMessage(
+        content="[truncated 20 lines]",
+        tool_call_id="call_1",
+        additional_kwargs={"full_output": "the full untruncated output"},
+    )
+    turns, _ = build_turns_and_outputs([ai, tm])
+    assert turns[0]["toolResult"]["output"] == "the full untruncated output"
+
+
+def test_build_turns_falls_back_to_content_without_full_output():
+    ai = AIMessage(content="", tool_calls=[
+        {"name": "list_files", "args": {}, "id": "call_1"},
+    ])
+    tm = ToolMessage(content="ok", tool_call_id="call_1")
+    turns, _ = build_turns_and_outputs([ai, tm])
+    assert turns[0]["toolResult"]["output"] == "ok"
+
+
 def test_build_turns_thinking_chars_from_reasoning_content():
     ai = AIMessage(content="the answer",
                     additional_kwargs={"reasoning_content": "step by step..."})
@@ -464,6 +486,8 @@ TESTS = [
     test_build_turns_multiple_tool_calls_one_hop,
     test_build_turns_final_answer_no_tool_calls,
     test_build_turns_tool_hop_then_final_hop,
+    test_build_turns_prefers_full_output,
+    test_build_turns_falls_back_to_content_without_full_output,
     test_build_turns_thinking_chars_from_reasoning_content,
     test_build_turns_empty_messages,
     test_flush_pending_events_on_empty_queue_returns_immediately,

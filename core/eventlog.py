@@ -105,7 +105,10 @@ def build_turns_and_outputs(new_messages: list) -> tuple[list[dict], list[dict]]
         if m.tool_calls:
             for tc in m.tool_calls:
                 tool_msg = tool_messages_by_id.get(tc["id"])
-                output = str(tool_msg.content) if tool_msg is not None else ""
+                if tool_msg is not None:
+                    output = str(tool_msg.additional_kwargs.get("full_output", tool_msg.content))
+                else:
+                    output = ""
                 turns.append({
                     "kind": "tool",
                     "content": text,

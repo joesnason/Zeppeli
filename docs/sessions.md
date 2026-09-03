@@ -144,7 +144,19 @@ objects, mutated in place by `run_turn()`) maps onto `history[]` as:
 | `HumanMessage` | `"user"` | `content` via `core/messages.py`'s `extract_text()` (handles both plain-str and image-attached list content) |
 | `AIMessage`, no `tool_calls` | `"assistant"` | one entry |
 | `AIMessage`, with `tool_calls` | `"assistant"` × N | **one entry per call** — a single hop can carry multiple tool calls (`ui/turn.py`'s `for tc in response.tool_calls:`); the response text is attached to the first entry only, `""` on the rest, so each entry still pairs 1:1 with its `ToolMessage` |
-| `ToolMessage` | `"tool"` | `toolResult.ok` is a heuristic: `False` if the output starts with `"Error:"` (the convention every `@tool` in `core/tools.py` uses to signal failure) or contains `"CANCELLED"` (the literal string `ui/turn.py` puts in a denied-permission result); `True` otherwise |
+| `ToolMessage` | `"tool"` | `toolResult.ok` is a heuristic: `False` if the output starts with `"Error:"` (the convention every `@tool` in `core/tools.py` uses to signal failure) or contains `"CANCELLED"` (the literal string `ui/turn.py` puts in a denied-permission result); `True` otherwise. `toolResult.output`/`content` come from `m.additional_kwargs["full_output"]` (falling back to `m.content` if absent) — the **full, untruncated** tool result, even though `ui/turn.py` may have sent the model a trimmed version via `core/messages.py`'s `truncate_tool_output()` (see [`docs/tools.md`](tools.md#tool-output-truncation)) |
+
+This table describes the full, uncompacted `messages` list `_run_and_
+persist()` (`ui/repl.py`) slices via `start_index` — and that's the *only*
+list this conversion ever sees. `core/messages.py`'s `compact_messages()`
+(see [`docs/models.md`](models.md#turn-level-context-compaction-25-turn-sliding-window))
+builds a separate, turn-windowed *view* of `messages` for the model, fresh on
+every hop, entirely inside `ui/streaming.py`'s `stream_response()` — it never
+writes back to or derives from the canonical list. So `append_history_from_
+messages()` and `core/eventlog.py`'s `build_turns_and_outputs()` always see
+every message from every turn, even once the conversation has grown well
+past the 25-turn point where the model itself stops seeing the older middle
+turns.
 
 ## Judgment calls made without an existing precedent
 

@@ -161,6 +161,59 @@ an entry to `PRE_TOOL_HOOKS`, without changing `run_turn()`. That entry
 automatically participates in all three permission modes via
 `build_pre_tool_hooks()` — no separate per-mode registration is needed.
 
+## Tool-output truncation
+
+Like the pre-tool hooks above, this is a cross-cutting mechanism applied in
+`ui/turn.py`'s `run_turn()` — not a per-tool cap. It runs uniformly on
+**every** tool result (all six tools) and on the CANCELLED
+permission-denial message, right before each becomes `ToolMessage` content
+sent back to the model:
+
+```python
+full_output = str(result)
+messages.append(ToolMessage(
+    content=truncate_tool_output(full_output),
+    tool_call_id=tc["id"],
+    additional_kwargs={"full_output": full_output},
+))
+```
+
+`truncate_tool_output()` (`core/messages.py`) applies two independent rules,
+both checked, both able to apply:
+
+1. **Line rule**: if the text has more than 40 lines, keep the first 20 and
+   last 20 lines, with a `[truncated N lines]` marker in between (`N` = the
+   number of omitted lines).
+2. **Char rule**: checked against the result of step 1 — if it still exceeds
+   2400 characters, keep the first 1200 and last 1200 characters, with a
+   `[truncated N chars]` marker in between (`N` = the number of omitted
+   characters).
+
+The two rules are independent, not mutually exclusive: text with 35 lines but
+5000 total characters (many short lines) still gets char-truncated even
+though the line rule never fired, and text that trips the line rule can
+still trip the char rule afterward if the 40 kept lines are still long
+enough — in that case the char cut can land on top of (and remove) the line
+marker itself, since it operates as a blunt cut over whatever the line rule
+produced.
+
+This is a generic backstop layered on top of, not a replacement for, the
+per-tool caps described below — `rg_search`'s own `max_bytes` cap and
+`read_file`'s pagination both still apply first, and this cap only trims
+further if their output is still large. It's also the *only* cap for
+`list_files`, `glob_files`, `write_file`, and `delete_file`, which have no
+per-tool cap of their own.
+
+Truncation only affects what the model sees. The untruncated original is
+preserved in `ToolMessage.additional_kwargs["full_output"]`, which
+`core/sessions.py`'s `append_history_from_messages()` and
+`core/eventlog.py`'s `build_turns_and_outputs()` both read in preference to
+`.content` (falling back to `.content` for any `ToolMessage` built without
+`full_output`, e.g. `test_tool_call.py`'s own direct construction) — so
+session history (`~/.zeppeli/sessions/`) and the event log
+(`~/.zeppeli/logs/`) always record the complete, untruncated tool output
+even when the model itself only saw a trimmed version.
+
 ## Search tools
 
 ### `list_files(path=".")`

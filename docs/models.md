@@ -244,6 +244,63 @@ convention assumed here — verify manually against a live Ollama instance
 print(ollama.show('<model>').modelinfo)"`) before relying on the toolbar
 number, similar in spirit to the litellm caveat above.
 
+## Turn-level context compaction (25-turn sliding window)
+
+The in-memory `messages` list (`ui/repl.py`'s `main()`) grows for the whole
+life of the process — every turn appends onto it, nothing ever trims it.
+Left unchecked, a long-running conversation eventually risks exceeding the
+model's context window. `core/messages.py`'s `compact_messages()` addresses
+this by building a **turn-windowed view** of the conversation for the model,
+without ever touching the canonical list itself.
+
+A **turn** is one `HumanMessage` plus everything that follows it
+(`AIMessage`/`ToolMessage` hops from `ui/turn.py`'s `run_turn()`) up to but
+not including the next `HumanMessage`. Once the conversation exceeds
+`_MAX_TURNS` (25) turns, `compact_messages()` returns only:
+
+- the first turn (`_KEEP_FIRST_TURNS = 1`) — the user's original intent for
+  the conversation, and
+- the latest 24 turns (`_KEEP_LAST_TURNS = 24`)
+
+— 25 turns' worth of messages total. Any leading preamble (everything before
+the first `HumanMessage` — in practice just the always-present
+`SystemMessage`) is kept in full and doesn't count toward the 25. At or
+below the threshold, the conversation is returned unchanged.
+
+**Why the unit is a whole turn, not a raw message count**: a hop's
+`AIMessage(tool_calls=[...])` is always immediately followed by one or more
+matching `ToolMessage`s (paired by `tool_call_id`). A naive "keep the last N
+raw messages" slice could land in the middle of that pairing — dropping the
+`AIMessage` while keeping an orphaned `ToolMessage`, or vice versa.
+LangChain's Ollama/litellm message converters don't validate this
+client-side, but OpenAI-compatible cloud APIs (reached via litellm) reject a
+malformed sequence server-side. Because a turn is always a complete,
+self-contained unit, grouping by turn makes a split pairing structurally
+impossible — a turn is kept or dropped as a whole.
+
+Compaction is **silent**: no marker or note is inserted telling the model
+turns were omitted (unlike `truncate_tool_output()`'s `[truncated N
+lines/chars]` notes — see above). It's also independent of and layered
+*above* that per-tool-output cap: `truncate_tool_output()` still runs inside
+whichever turns are kept, at the single-tool-result level; `compact_
+messages()` operates one layer up, at the whole-message-list level.
+
+Wired in at the single choke point every model call goes through:
+`ui/streaming.py`'s `stream_response()` calls `compact_messages(messages)`
+once per hop, immediately before both of its `.stream()` call sites (the
+main attempt and the reasoning-fallback retry), and passes the result —
+never `messages` itself — to the model. See
+[`docs/sessions.md`](sessions.md#message--history-conversion) for why this
+is safe with respect to session/event-log persistence, which reads the
+canonical, uncompacted `messages` list exclusively.
+
+Covered by `test_compaction.py`: turn-counting/grouping correctness at and
+above the threshold, preamble handling, a multi-hop tool-call turn
+surviving intact when kept vs. dropped as a whole unit when not, non-
+mutation of the input list, and an integration test on `stream_response()`
+confirming the model receives the compacted view while the caller's own
+`messages` list is untouched.
+
 ## Testing
 
 `test_model_config.py` covers all of the flag/env-var resolution logic and

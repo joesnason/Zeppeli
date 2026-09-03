@@ -6,7 +6,7 @@ from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
 
 from core.eventlog import log_model_activity
-from core.messages import extract_text as _extract_text
+from core.messages import extract_text as _extract_text, compact_messages as _compact_messages
 
 _ctx_state = {"tokens": 0}
 
@@ -113,15 +113,22 @@ def stream_response(llm_with_tools, messages, console: Console, *,
     When session_id/run_id/turn_index are all given (ui/turn.py's run_turn()
     passes these through), logs one model_activity event for this hop after
     a successful merge — skipped entirely if any of the three is None, so
-    other/test callers are unaffected."""
+    other/test callers are unaffected.
+
+    Before every call to the model, `messages` is compacted via
+    core/messages.py's compact_messages() into a turn-windowed `view` (first
+    turn + latest 24, once the conversation exceeds 25 turns) — this only
+    affects what the model sees; `messages` itself (and everything ui/turn.py
+    and ui/repl.py's session/event-log persistence do with it) is untouched."""
     use_reasoning = reasoning and not _reasoning_unsupported["flag"]
+    view = _compact_messages(messages)
     try:
-        chunks = _consume_stream(llm_with_tools, messages, console, reasoning=use_reasoning)
+        chunks = _consume_stream(llm_with_tools, view, console, reasoning=use_reasoning)
     except Exception as e:
         if use_reasoning:
             _reasoning_unsupported["flag"] = True
             try:
-                chunks = _consume_stream(llm_with_tools, messages, console, reasoning=False)
+                chunks = _consume_stream(llm_with_tools, view, console, reasoning=False)
             except Exception as e2:
                 console.print(f"[red]Error: {escape(_format_model_error(e2))}[/red]")
                 return None

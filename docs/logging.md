@@ -133,7 +133,11 @@ Logged once per turn, right after the run is classified
 `append_history_from_messages()`'s one-entry-per-tool-call splitting
 (`toolResult.ok` uses the same `Error:`/`CANCELLED` heuristic, now shared
 as `core/messages.py::tool_result_ok()`), and `modelOutputs` is one summary
-per `AIMessage` hop.
+per `AIMessage` hop. Like `docs/sessions.md`'s `history[]`, `toolResult.output`
+is read from the matching `ToolMessage`'s `additional_kwargs["full_output"]`
+(falling back to `.content`) — the full, untruncated tool result, regardless
+of whatever cap `core/messages.py`'s `truncate_tool_output()` applied to what
+the model actually saw (see [`docs/tools.md`](tools.md#tool-output-truncation)).
 
 ### `cli_error`
 
