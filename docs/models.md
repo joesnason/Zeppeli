@@ -301,6 +301,86 @@ mutation of the input list, and an integration test on `stream_response()`
 confirming the model receives the compacted view while the caller's own
 `messages` list is untouched.
 
+## Budget-based second-tier compaction (summarized middle)
+
+Tier 1 above is a fixed structural cap (25 turns), not a token budget — a
+tool-heavy conversation can still stay under 25 turns while carrying far
+more text than a smaller-context model can actually hold. `core/messages.py`'s
+`compact_messages_to_budget()` is a second, more aggressive layer that runs
+*after* tier 1, on tier 1's already-compacted view, inside the same
+`ui/streaming.py`'s `stream_response()` choke point:
+
+```python
+view = _compact_messages(messages)
+view = _compact_messages_to_budget(view, context_window)
+```
+
+**The trigger** is a rough token-count estimate, not a real tokenizer:
+total characters across every message's `.content` (via `extract_text()`)
+plus a JSON rendering of any `AIMessage.tool_calls` payload (real request
+payload too), divided by 4 (`_CHARS_PER_TOKEN` — a "1 token ≈ 4 chars"
+heuristic). This estimate is compared against 80% (`_BUDGET_TRIGGER_RATIO`)
+of `context_window` — the value threaded down from `core/agent.py`'s
+`get_context_window()` (local Ollama only) — or a `_DEFAULT_CONTEXT_WINDOW`
+of 256,000 tokens when that's unavailable (a cloud/litellm model, or a
+failed lookup). `256_000` uses `k = 1000`, matching the toolbar's own
+`tokens // 1000` display convention elsewhere in this file — it is a
+documented assumption, not a number tied to any specific model.
+
+**If triggered**, the view is compacted further to just the first turn
+(`_BUDGET_KEEP_FIRST_TURNS = 1`) and the latest 6 turns
+(`_BUDGET_KEEP_LAST_TURNS = 6`) — deliberately tighter than tier 1's 24,
+since this only fires when tier 1's own 25-turn window is already too much.
+Every message in the turns between them (the "dropped middle") is flattened,
+in original order, into **one bullet per original message** (not one per
+turn) and packed into a single synthesized `HumanMessage` (role `"user"`):
+a header line (`"[Earlier conversation summarized to fit context budget]"`)
+followed by numbered bullets, each labeled by the original LangChain role
+using the same mapping `docs/sessions.md` documents for session history
+(`HumanMessage` → `user:`, `AIMessage` → `assistant:`, `ToolMessage` →
+`tool:`). A `ToolMessage` bullet resolves its tool name (it only carries a
+`tool_call_id`) via a lookup built from the `AIMessage.tool_calls` entries
+being summarized, and reads `Previous tool result for <name>: <content>`.
+An `AIMessage` with `tool_calls` renders them as real JSON (`json.dumps`) —
+`{"tool": "...", "args": {...}}`, or a JSON array if one hop made multiple
+calls — matching this feature's own worked example rather than a Python
+`repr()`. Unlike tier 1, this is **not silent**: it's an explicit,
+itemized record of what was removed, so the model retains some awareness
+of the omitted context.
+
+Each bullet's displayed content is built from tier 1's already-compacted
+`.content` (not `additional_kwargs["full_output"]`), then truncated to its
+first 500 (`_SUMMARY_KEEP_HEAD`) + last 150 (`_SUMMARY_KEEP_TAIL`)
+characters **only if it exceeds 650** (`_SUMMARY_TRUNCATE_THRESHOLD`) —
+the same conditional-truncation convention as `truncate_tool_output()`
+above, via a sibling `_truncate_for_summary()` helper (same bracket-note
+style, smaller keep-sizes for a compact one-line bullet). Short items are
+left intact.
+
+**Accepted limitation**: if tier 1's view already has 7 turns or fewer
+(`_BUDGET_KEEP_FIRST_TURNS + _BUDGET_KEEP_LAST_TURNS`), there is no
+"middle" left to summarize away without also touching the guaranteed first
+turn or latest 6 — tier 2 does nothing in this case, even if the estimated
+token count is still over budget.
+
+**Behavior change to note**: to give tier 2 a real budget in one-shot `-p`
+mode too (not just the interactive REPL), `ui/repl.py`'s `main()` now calls
+`get_context_window()` unconditionally whenever `base_url` is falsy —
+previously this call only happened on the interactive path (after the
+one-shot early return), so `-p` mode never made this call at all. This adds
+one extra local `ollama.show()` round-trip to every one-shot invocation
+using a local Ollama model.
+
+Covered by `test_compaction.py`: below/at-threshold unchanged, the
+first+latest-6+summary shape once triggered, the ≤7-turn floor case, role
+labels and tool-name resolution in the summary (including a multi-tool-call
+hop rendering as one bullet, not two), the 650-char conditional truncation
+(`_truncate_for_summary()` both branches), the `context_window=None`
+default-fallback path, non-mutation of the input list, and a
+`stream_response()` integration test confirming the model-facing view
+reflects tier 2's shape when triggered while the caller's `messages` list
+stays untouched.
+
 ## Testing
 
 `test_model_config.py` covers all of the flag/env-var resolution logic and

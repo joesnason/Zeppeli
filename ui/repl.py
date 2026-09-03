@@ -141,7 +141,7 @@ def _take_pending_images() -> list[str]:
 
 
 def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
-                      mode, images, session, reasoning=False):
+                      mode, images, session, reasoning=False, context_window=None):
     """Run one turn via run_turn(), then record it into `session` and write
     it to disk. Wraps run_turn() rather than modifying it, so ui/turn.py
     keeps no knowledge of persistence — this is the only place that needs
@@ -163,7 +163,8 @@ def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
 
     t0 = time.monotonic()
     run_turn(llm_with_tools, messages, user_input, console, initial_cwd, mode, images=images,
-              session_id=_session_state["id"], run_id=run.id, reasoning=reasoning)
+              session_id=_session_state["id"], run_id=run.id, reasoning=reasoning,
+              context_window=context_window)
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     try:
@@ -298,13 +299,22 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
         history_session = create_session(_session_state["id"], initial_cwd, _model_state["name"])
         save_session(history_session)
 
+        # Local Ollama only — cloud/litellm models have no equivalent
+        # lookup. Fetched once here (not per turn), for both the toolbar
+        # display below and tier-2 compaction's token budget
+        # (core/messages.py's compact_messages_to_budget()) — including in
+        # one-shot -p mode, which has no toolbar but still needs a real
+        # number rather than always falling back to the 256k default.
+        context_window = get_context_window(model) if not base_url else None
+        _ctx_limit_state["tokens"] = context_window
+
         if prompt is not None:
             # One-shot mode: run exactly one turn and exit — no
             # PromptSession/toolbar (both assume an interactive terminal)
             # and no REPL loop.
             _run_and_persist(llm_with_tools, messages, prompt, console, initial_cwd, mode,
                               images=_take_pending_images(), session=history_session,
-                              reasoning=reasoning_enabled)
+                              reasoning=reasoning_enabled, context_window=context_window)
             # -p is meant to be deterministic/scriptable — a caller may read
             # the session file the instant this process exits, so flush
             # explicitly rather than relying on atexit's timing. The
@@ -314,12 +324,6 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
             flush_pending_writes()
             flush_pending_events()
             return
-
-        if not base_url:
-            # Local Ollama only — cloud/litellm models have no equivalent
-            # lookup. Fetched once here (not per turn, not per toolbar
-            # re-render) since it's static for the life of the process.
-            _ctx_limit_state["tokens"] = get_context_window(model)
 
         _toolbar_style = Style.from_dict({
             "bottom-toolbar": "bg:default fg:default noreverse",
@@ -382,7 +386,7 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
 
             _run_and_persist(llm_with_tools, messages, text, console, initial_cwd,
                               _mode_state["mode"], images=images, session=history_session,
-                              reasoning=reasoning_enabled)
+                              reasoning=reasoning_enabled, context_window=context_window)
     except Exception as e:
         # Genuine unexpected bugs only — the loop above already catches
         # KeyboardInterrupt/EOFError itself (a clean exit, not an error) and

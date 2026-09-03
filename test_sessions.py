@@ -52,6 +52,7 @@ _ORIGINAL_LOGS_DIR = eventlog.LOGS_DIR
 _ORIGINAL_REPL_LOAD_LLM = repl.load_llm
 _ORIGINAL_REPL_RUN_TURN = repl.run_turn
 _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING = repl.model_supports_reasoning
+_ORIGINAL_REPL_GET_CONTEXT_WINDOW = repl.get_context_window
 
 
 def _with_tmp_sessions_dir():
@@ -438,9 +439,11 @@ def test_main_prompt_mode_writes_one_session_file():
     tmp, restore = _with_tmp_sessions_dir()
     repl.load_llm = lambda **k: object()
     repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
+    repl.get_context_window = lambda *a, **k: None  # no real Ollama call in tests
 
     def _fake_run_turn(llm_with_tools, messages, user_input, console, initial_cwd,
-                        mode, images=None, session_id=None, run_id=None, reasoning=False):
+                        mode, images=None, session_id=None, run_id=None, reasoning=False,
+                        context_window=None):
         messages.append(HumanMessage(content=user_input))
         messages.append(AIMessage(content="hi back"))
 
@@ -458,6 +461,7 @@ def test_main_prompt_mode_writes_one_session_file():
         repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
         repl.run_turn = _ORIGINAL_REPL_RUN_TURN
         repl.model_supports_reasoning = _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING
+        repl.get_context_window = _ORIGINAL_REPL_GET_CONTEXT_WINDOW
         restore()
 
 

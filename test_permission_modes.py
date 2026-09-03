@@ -55,6 +55,7 @@ _ORIGINAL_ARROW_MENU = permissions._arrow_menu
 _ORIGINAL_CONFIRM_AUTO_MODE_TRUST = repl.confirm_auto_mode_trust
 _ORIGINAL_REPL_LOAD_LLM = repl.load_llm
 _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING = repl.model_supports_reasoning
+_ORIGINAL_REPL_GET_CONTEXT_WINDOW = repl.get_context_window
 _ORIGINAL_REPL_RUN_TURN = repl.run_turn
 _ORIGINAL_SESSIONS_DIR = sessions.SESSIONS_DIR
 _ORIGINAL_LOGS_DIR = eventlog.LOGS_DIR
@@ -210,6 +211,7 @@ def test_main_prompt_mode_skips_trust_check():
     repl.load_llm = lambda **k: object()
     repl.run_turn = lambda *a, **k: None
     repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
+    repl.get_context_window = lambda *a, **k: None  # no real Ollama call in tests
     with tempfile.TemporaryDirectory() as tmp:
         sessions.SESSIONS_DIR = Path(tmp) / "sessions"
         eventlog.LOGS_DIR = Path(tmp) / "logs"
@@ -220,6 +222,7 @@ def test_main_prompt_mode_skips_trust_check():
             repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
             repl.run_turn = _ORIGINAL_REPL_RUN_TURN
             repl.model_supports_reasoning = _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING
+            repl.get_context_window = _ORIGINAL_REPL_GET_CONTEXT_WINDOW
             sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
             eventlog.LOGS_DIR = _ORIGINAL_LOGS_DIR
 
@@ -243,6 +246,7 @@ def test_main_seeds_unique_session_id():
     repl.load_llm = lambda **k: object()
     repl.run_turn = lambda *a, **k: None
     repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
+    repl.get_context_window = lambda *a, **k: None  # no real Ollama call in tests
     with tempfile.TemporaryDirectory() as tmp:
         sessions.SESSIONS_DIR = Path(tmp) / "sessions"
         eventlog.LOGS_DIR = Path(tmp) / "logs"
@@ -255,6 +259,7 @@ def test_main_seeds_unique_session_id():
             repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
             repl.run_turn = _ORIGINAL_REPL_RUN_TURN
             repl.model_supports_reasoning = _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING
+            repl.get_context_window = _ORIGINAL_REPL_GET_CONTEXT_WINDOW
             sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
             eventlog.LOGS_DIR = _ORIGINAL_LOGS_DIR
 

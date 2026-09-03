@@ -1,15 +1,24 @@
-"""Automated tests for core/messages.py's compact_messages() — the
-turn-level context-window compaction applied to the view sent to the model
-(via ui/streaming.py's stream_response()), never to the canonical `messages`
-list ui/repl.py's _run_and_persist() slices for session/event-log
-persistence. Style matches test_truncation.py. No Ollama/network
-dependency, exits non-zero on failure.
+"""Automated tests for core/messages.py's two-tier context compaction and
+its ui/streaming.py stream_response() integration. Neither tier mutates,
+or is ever visible in, the canonical `messages` list ui/repl.py's
+_run_and_persist() slices for session/event-log persistence. Style matches
+test_truncation.py. No Ollama/network dependency, exits non-zero on
+failure.
 
-A "turn" is one HumanMessage plus everything that follows it (AIMessage/
-ToolMessage hops) up to but not including the next HumanMessage. Turns, not
-raw messages, are the unit compact_messages() counts/drops, specifically so
-a hop's AIMessage(tool_calls=[...]) is never separated from its matching
-ToolMessage(s) — see core/messages.py's docstring for the full rationale.
+Tier 1 — compact_messages(): a "turn" is one HumanMessage plus everything
+that follows it (AIMessage/ToolMessage hops) up to but not including the
+next HumanMessage. Turns, not raw messages, are the unit compact_messages()
+counts/drops, specifically so a hop's AIMessage(tool_calls=[...]) is never
+separated from its matching ToolMessage(s) — see core/messages.py's
+docstring for the full rationale.
+
+Tier 2 — compact_messages_to_budget(): runs on tier 1's already-compacted
+view; if the estimated token count still exceeds 80% of the model's
+context window (or a 256k default when unknown), compacts further to the
+first turn + latest 6 turns, replacing everything else with one
+synthesized summary HumanMessage — a numbered, per-original-message bullet
+list, role-labeled (user/assistant/tool), each item truncated to its first
+500 + last 150 characters if it exceeds 650.
 """
 
 import io
@@ -18,7 +27,7 @@ import sys
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from rich.console import Console
 
-from core.messages import compact_messages
+from core.messages import compact_messages, compact_messages_to_budget, _truncate_for_summary
 from ui.streaming import stream_response
 
 
@@ -43,6 +52,27 @@ def _build(n_turns, turn_builder=_turn, preamble=True):
     for i in range(n_turns):
         messages.extend(turn_builder(i))
     return messages
+
+
+def _big_turn(n, size=400):
+    """One simple turn like _turn(), but with a longer AIMessage.content —
+    used to push the estimated token count over a small test budget."""
+    return [HumanMessage(content=f"user {n}"), AIMessage(content="x" * size)]
+
+
+def _multi_tool_call_turn(n):
+    """One multi-hop turn like _tool_call_turn(), but with two tool_calls
+    in a single AIMessage hop (and their two matching ToolMessages)."""
+    return [
+        HumanMessage(content=f"user {n}"),
+        AIMessage(content="", tool_calls=[
+            {"name": "list_files", "args": {}, "id": f"call_{n}_a"},
+            {"name": "read_file", "args": {"path": "x"}, "id": f"call_{n}_b"},
+        ]),
+        ToolMessage(content="ok1", tool_call_id=f"call_{n}_a"),
+        ToolMessage(content="ok2", tool_call_id=f"call_{n}_b"),
+        AIMessage(content=f"reply {n}"),
+    ]
 
 
 def test_at_or_below_threshold_returns_all_turns_unchanged():
@@ -127,6 +157,111 @@ def test_returned_view_message_objects_are_shared_not_deep_copied():
     assert result[-1] is messages[-1]
 
 
+def test_budget_below_threshold_returns_unchanged():
+    messages = _build(5)  # small turn count, tiny content
+    result = compact_messages_to_budget(messages, context_window=1_000_000)
+    assert len(result) == len(messages)
+    for a, b in zip(result, messages):
+        assert a is b
+
+
+def test_budget_above_threshold_produces_first_plus_latest_6_plus_summary():
+    messages = [SystemMessage(content="sys")]
+    for i in range(10):
+        messages.extend(_big_turn(i, size=400))
+    # context_window=1000 -> budget = 800 tokens = 3200 chars; 10 turns x
+    # ~400+ chars each comfortably exceeds that.
+    result = compact_messages_to_budget(messages, context_window=1000)
+
+    # preamble(1) + first turn(2 msgs) + summary(1 msg) + latest 6 turns(12 msgs)
+    assert len(result) == 1 + 2 + 1 + 6 * 2
+    assert isinstance(result[0], SystemMessage)
+    assert result[1].content == "user 0"  # first turn retained verbatim
+
+    summary = result[3]
+    assert isinstance(summary, HumanMessage)
+    assert "[Earlier conversation summarized" in summary.content
+    for i in range(1, 4):  # turns 1-3 are the dropped middle
+        assert f"user {i}" in summary.content
+
+    texts = [getattr(m, "content", "") for m in result]
+    for i in range(4, 10):  # turns 4-9 are the latest 6, kept verbatim
+        assert f"user {i}" in texts
+
+
+def test_budget_floor_case_seven_or_fewer_turns_returns_unchanged_even_over_budget():
+    messages = [SystemMessage(content="sys")]
+    for i in range(7):
+        messages.extend(_big_turn(i, size=1000))  # force well over budget
+    result = compact_messages_to_budget(messages, context_window=1000)
+    assert len(result) == len(messages)
+    for a, b in zip(result, messages):
+        assert a is b
+
+
+def test_budget_summary_role_labels_and_tool_name_resolution():
+    messages = [SystemMessage(content="sys")]
+    for i in range(10):
+        messages.extend(_tool_call_turn(i) if i == 2 else _big_turn(i, size=400))
+    result = compact_messages_to_budget(messages, context_window=1000)
+    summary = next(m for m in result if isinstance(m, HumanMessage)
+                    and "[Earlier conversation" in m.content)
+    body = summary.content
+    assert "user: user 2" in body
+    assert '"tool": "list_files"' in body  # real JSON, not Python repr
+    assert "tool: Previous tool result for list_files: ok" in body
+    assert "assistant: reply 2" in body
+
+
+def test_budget_summary_multi_tool_call_hop_renders_as_one_bullet():
+    messages = [SystemMessage(content="sys")]
+    for i in range(10):
+        messages.extend(_multi_tool_call_turn(i) if i == 2 else _big_turn(i, size=400))
+    result = compact_messages_to_budget(messages, context_window=1000)
+    summary = next(m for m in result if isinstance(m, HumanMessage)
+                    and "[Earlier conversation" in m.content)
+    assistant_bullets = [ln for ln in summary.content.split("\n")
+                         if "assistant:" in ln and "list_files" in ln]
+    assert len(assistant_bullets) == 1  # one bullet, not two
+    assert "read_file" in assistant_bullets[0]
+
+
+def test_summary_truncate_short_text_unchanged():
+    text = "x" * 650
+    assert _truncate_for_summary(text) == text
+
+
+def test_summary_truncate_long_text_has_head_tail_and_marker():
+    text = "x" * 500 + "y" * 300 + "z" * 150  # 950 chars, over the 650 threshold
+    result = _truncate_for_summary(text)
+    assert result.startswith("x" * 500)
+    assert result.endswith("z" * 150)
+    omitted = len(text) - 500 - 150
+    assert f"[truncated {omitted} chars]" in result
+
+
+def test_budget_context_window_none_falls_back_to_default():
+    # Small conversation, nowhere near 256_000 * 0.8 tokens (~819_200
+    # chars) — must NOT trigger, proving the fallback is a large sane
+    # number rather than 0/None being treated as "no budget."
+    messages = _build(10)
+    result = compact_messages_to_budget(messages, context_window=None)
+    assert len(result) == len(messages)
+    for a, b in zip(result, messages):
+        assert a is b
+
+
+def test_budget_does_not_mutate_input_list():
+    messages = [SystemMessage(content="sys")]
+    for i in range(10):
+        messages.extend(_big_turn(i, size=400))
+    before_len = len(messages)
+    before_ids = [id(m) for m in messages]
+    compact_messages_to_budget(messages, context_window=1000)
+    assert len(messages) == before_len
+    assert [id(m) for m in messages] == before_ids
+
+
 class _RecordingLLM:
     """Stands in for llm_with_tools: records the exact `messages` list
     .stream() was called with (self.received), and yields a trivial
@@ -155,6 +290,25 @@ def test_stream_response_passes_compacted_view_to_model_not_full_messages():
     assert len(messages) == original_len  # caller's own list untouched
 
 
+def test_stream_response_applies_budget_tier_when_context_window_given():
+    messages = [SystemMessage(content="sys")]
+    for i in range(10):
+        messages.extend(_big_turn(i, size=400))
+    original_len = len(messages)
+    llm = _RecordingLLM()
+    console = Console(file=io.StringIO())
+
+    stream_response(llm, messages, console, context_window=1000)
+
+    assert llm.received is not None
+    human_count = sum(1 for m in llm.received if isinstance(m, HumanMessage))
+    # first turn's Human + latest 6 turns' Human + 1 synthesized summary Human
+    assert human_count == 1 + 6 + 1
+    assert any("[Earlier conversation summarized" in getattr(m, "content", "")
+               for m in llm.received)
+    assert len(messages) == original_len  # caller's own list untouched
+
+
 TESTS = [
     test_at_or_below_threshold_returns_all_turns_unchanged,
     test_above_threshold_compacts_to_first_plus_latest_24,
@@ -165,6 +319,16 @@ TESTS = [
     test_does_not_mutate_input_list,
     test_returned_view_message_objects_are_shared_not_deep_copied,
     test_stream_response_passes_compacted_view_to_model_not_full_messages,
+    test_budget_below_threshold_returns_unchanged,
+    test_budget_above_threshold_produces_first_plus_latest_6_plus_summary,
+    test_budget_floor_case_seven_or_fewer_turns_returns_unchanged_even_over_budget,
+    test_budget_summary_role_labels_and_tool_name_resolution,
+    test_budget_summary_multi_tool_call_hop_renders_as_one_bullet,
+    test_summary_truncate_short_text_unchanged,
+    test_summary_truncate_long_text_has_head_tail_and_marker,
+    test_budget_context_window_none_falls_back_to_default,
+    test_budget_does_not_mutate_input_list,
+    test_stream_response_applies_budget_tier_when_context_window_given,
 ]
 
 

@@ -6,7 +6,11 @@ from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
 
 from core.eventlog import log_model_activity
-from core.messages import extract_text as _extract_text, compact_messages as _compact_messages
+from core.messages import (
+    extract_text as _extract_text,
+    compact_messages as _compact_messages,
+    compact_messages_to_budget as _compact_messages_to_budget,
+)
 
 _ctx_state = {"tokens": 0}
 
@@ -90,7 +94,8 @@ def _consume_stream(llm_with_tools, messages, console: Console, *, reasoning: bo
 
 def stream_response(llm_with_tools, messages, console: Console, *,
                      session_id: str | None = None, run_id: str | None = None,
-                     turn_index: int | None = None, reasoning: bool = False):
+                     turn_index: int | None = None, reasoning: bool = False,
+                     context_window: int | None = None):
     """Show a 'Thinking...' spinner until the first content token arrives, then
     stream the rest of the response as live-updating Markdown. Returns the
     accumulated AIMessage (chunks merged), or None if the stream was empty or
@@ -115,13 +120,20 @@ def stream_response(llm_with_tools, messages, console: Console, *,
     a successful merge — skipped entirely if any of the three is None, so
     other/test callers are unaffected.
 
-    Before every call to the model, `messages` is compacted via
-    core/messages.py's compact_messages() into a turn-windowed `view` (first
-    turn + latest 24, once the conversation exceeds 25 turns) — this only
-    affects what the model sees; `messages` itself (and everything ui/turn.py
-    and ui/repl.py's session/event-log persistence do with it) is untouched."""
+    Before every call to the model, `messages` is compacted in two layers,
+    neither of which mutates `messages` itself (and everything ui/turn.py
+    and ui/repl.py's session/event-log persistence do with it is
+    untouched):
+      1. core/messages.py's compact_messages() — a turn-windowed view
+         (first turn + latest 24, once the conversation exceeds 25 turns).
+      2. core/messages.py's compact_messages_to_budget() — applied on top
+         of (1)'s result; if the estimated token count still exceeds 80%
+         of `context_window` (or a 256k default when None), compacts
+         further to the first turn + latest 6, replacing everything else
+         with one synthesized summary message."""
     use_reasoning = reasoning and not _reasoning_unsupported["flag"]
     view = _compact_messages(messages)
+    view = _compact_messages_to_budget(view, context_window)
     try:
         chunks = _consume_stream(llm_with_tools, view, console, reasoning=use_reasoning)
     except Exception as e:
