@@ -23,6 +23,7 @@ features' own coverage) so this suite never touches the developer's real
 ~/.zeppeli/sessions/ or ~/.zeppeli/logs/.
 """
 
+import asyncio
 import sys
 import tempfile
 import uuid
@@ -73,10 +74,28 @@ def test_build_pre_tool_hooks_yolo():
 
 
 def test_build_pre_tool_hooks_approval_shape():
+    # permission_ask() now needs a `live` argument only available at call
+    # time (ui/live_region.py's LiveRegion/SimpleLive), so build_pre_tool_
+    # hooks() binds a fresh closure per call instead of returning
+    # permission_ask itself — check shape/behavior, not identity.
     hooks = build_pre_tool_hooks(MODE_APPROVAL, "/any/cwd")
-    assert hooks["write_file"] is _ORIGINAL_PERMISSION_ASK
-    assert hooks["delete_file"] is _ORIGINAL_PERMISSION_ASK
+    assert set(hooks.keys()) == {"write_file", "delete_file"}
+    assert callable(hooks["write_file"]) and callable(hooks["delete_file"])
+    assert hooks["write_file"] is hooks["delete_file"]
     assert hooks is not permissions.PRE_TOOL_HOOKS
+
+
+def test_build_pre_tool_hooks_approval_delegates_to_permission_ask():
+    async def _fake(tool_name, args, console, live):
+        return tool_name == "write_file"
+
+    permissions.permission_ask = _fake
+    try:
+        hooks = build_pre_tool_hooks(MODE_APPROVAL, "/any/cwd")
+        assert asyncio.run(hooks["write_file"]("write_file", {"path": "x"}, _console)) is True
+        assert asyncio.run(hooks["delete_file"]("delete_file", {"path": "x"}, _console)) is False
+    finally:
+        permissions.permission_ask = _ORIGINAL_PERMISSION_ASK
 
 
 def test_build_pre_tool_hooks_auto_shape():
@@ -109,14 +128,14 @@ def test_is_within_cwd_dotdot_escape_outside():
 
 def test_auto_hook_inside_cwd_no_prompt():
     with tempfile.TemporaryDirectory() as tmp:
-        def _spy(*a, **k):
+        async def _spy(*a, **k):
             raise AssertionError("permission_ask should not be called inside cwd")
 
         permissions.permission_ask = _spy
         try:
-            hook = _make_auto_hook(tmp)
+            hook = _make_auto_hook(tmp, live=None)
             path = str(Path(tmp) / "f.txt")
-            assert hook("write_file", {"path": path}, _console) is True
+            assert asyncio.run(hook("write_file", {"path": path}, _console)) is True
         finally:
             permissions.permission_ask = _ORIGINAL_PERMISSION_ASK
 
@@ -124,10 +143,15 @@ def test_auto_hook_inside_cwd_no_prompt():
 def test_auto_hook_outside_cwd_delegates_true():
     with tempfile.TemporaryDirectory() as tmp:
         calls = []
-        permissions.permission_ask = lambda *a, **k: (calls.append(a), True)[1]
+
+        async def _fake(*a, **k):
+            calls.append(a)
+            return True
+
+        permissions.permission_ask = _fake
         try:
-            hook = _make_auto_hook(tmp)
-            assert hook("write_file", {"path": "/etc/passwd"}, _console) is True
+            hook = _make_auto_hook(tmp, live=None)
+            assert asyncio.run(hook("write_file", {"path": "/etc/passwd"}, _console)) is True
             assert len(calls) == 1
         finally:
             permissions.permission_ask = _ORIGINAL_PERMISSION_ASK
@@ -135,10 +159,13 @@ def test_auto_hook_outside_cwd_delegates_true():
 
 def test_auto_hook_outside_cwd_delegates_false():
     with tempfile.TemporaryDirectory() as tmp:
-        permissions.permission_ask = lambda *a, **k: False
+        async def _fake(*a, **k):
+            return False
+
+        permissions.permission_ask = _fake
         try:
-            hook = _make_auto_hook(tmp)
-            assert hook("delete_file", {"path": "/etc/passwd"}, _console) is False
+            hook = _make_auto_hook(tmp, live=None)
+            assert asyncio.run(hook("delete_file", {"path": "/etc/passwd"}, _console)) is False
         finally:
             permissions.permission_ask = _ORIGINAL_PERMISSION_ASK
 
@@ -207,9 +234,12 @@ def test_main_prompt_mode_skips_trust_check():
     def _spy(console):
         raise AssertionError("confirm_auto_mode_trust should not be called in -p mode")
 
+    async def _fake_run_turn(*a, **k):
+        return None
+
     repl.confirm_auto_mode_trust = _spy
     repl.load_llm = lambda **k: object()
-    repl.run_turn = lambda *a, **k: None
+    repl.run_turn = _fake_run_turn
     repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
     repl.get_context_window = lambda *a, **k: None  # no real Ollama call in tests
     with tempfile.TemporaryDirectory() as tmp:
@@ -243,8 +273,11 @@ def test_clear_input_esc_noop_on_empty_buffer():
 
 
 def test_main_seeds_unique_session_id():
+    async def _fake_run_turn(*a, **k):
+        return None
+
     repl.load_llm = lambda **k: object()
-    repl.run_turn = lambda *a, **k: None
+    repl.run_turn = _fake_run_turn
     repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
     repl.get_context_window = lambda *a, **k: None  # no real Ollama call in tests
     with tempfile.TemporaryDirectory() as tmp:
@@ -283,6 +316,7 @@ def test_get_toolbar_includes_session_id_line():
 TESTS = [
     test_build_pre_tool_hooks_yolo,
     test_build_pre_tool_hooks_approval_shape,
+    test_build_pre_tool_hooks_approval_delegates_to_permission_ask,
     test_build_pre_tool_hooks_auto_shape,
     test_is_within_cwd_relative_inside,
     test_is_within_cwd_absolute_inside,

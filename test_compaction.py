@@ -21,6 +21,7 @@ list, role-labeled (user/assistant/tool), each item truncated to its first
 500 + last 150 characters if it exceeds 650.
 """
 
+import asyncio
 import io
 import sys
 
@@ -28,6 +29,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Sys
 from rich.console import Console
 
 from core.messages import compact_messages, compact_messages_to_budget, _truncate_for_summary
+from ui.live_region import SimpleLive
 from ui.streaming import stream_response
 
 
@@ -264,15 +266,15 @@ def test_budget_does_not_mutate_input_list():
 
 class _RecordingLLM:
     """Stands in for llm_with_tools: records the exact `messages` list
-    .stream() was called with (self.received), and yields a trivial
+    .astream() was called with (self.received), and yields a trivial
     one-chunk response."""
 
     def __init__(self):
         self.received = None
 
-    def stream(self, messages, reasoning=None):
+    async def astream(self, messages, reasoning=None):
         self.received = messages
-        return iter([AIMessageChunk(content="ok")])
+        yield AIMessageChunk(content="ok")
 
 
 def test_stream_response_passes_compacted_view_to_model_not_full_messages():
@@ -280,8 +282,9 @@ def test_stream_response_passes_compacted_view_to_model_not_full_messages():
     original_len = len(messages)
     llm = _RecordingLLM()
     console = Console(file=io.StringIO())
+    live = SimpleLive(console)
 
-    stream_response(llm, messages, console)
+    asyncio.run(stream_response(llm, messages, console, live))
 
     assert llm.received is not None
     assert llm.received is not messages
@@ -297,8 +300,9 @@ def test_stream_response_applies_budget_tier_when_context_window_given():
     original_len = len(messages)
     llm = _RecordingLLM()
     console = Console(file=io.StringIO())
+    live = SimpleLive(console)
 
-    stream_response(llm, messages, console, context_window=1000)
+    asyncio.run(stream_response(llm, messages, console, live, context_window=1000))
 
     assert llm.received is not None
     human_count = sum(1 for m in llm.received if isinstance(m, HumanMessage))

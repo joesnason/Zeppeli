@@ -1,8 +1,20 @@
-"""Streaming AI responses to the terminal — spinner, then live Markdown rendering."""
+"""Streaming AI responses to the terminal — spinner, then live Markdown rendering.
+
+Async: model calls use `.astream()` (both ChatOllama and ChatLiteLLM
+support genuine async streaming with identical `reasoning=True` kwarg
+handling to their sync `.stream()` counterparts — verified against this
+repo's installed langchain-ollama/langchain-litellm versions) so nothing
+here blocks the persistent Application's event loop (ui/repl.py), which
+is what keeps the bottom toolbar rendering during a turn. The spinner and
+live-updating Markdown render through `live` (a ui/live_region.py
+LiveRegion) instead of `rich.live.Live`/`console.status()` — those
+cursor-reposition-and-overwrite their own terminal region, a second
+renderer the toolbar's Application can't safely coexist with; `live`'s
+Window lives inside the same Application/Layout as the toolbar."""
+
+import time
 
 from rich.console import Console
-from rich.live import Live
-from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
 
 from core.eventlog import log_model_activity
@@ -65,37 +77,49 @@ def _format_model_error(e: Exception) -> str:
     return f"{name}: {msg}"
 
 
-def _consume_stream(llm_with_tools, messages, console: Console, *, reasoning: bool) -> list:
-    """Runs the spinner-then-Live-Markdown loop, consuming llm_with_tools's
-    stream. Returns the list of raw chunks (possibly empty if the stream
-    yielded nothing). Raises whatever the model call raises — the caller
-    decides how to handle it (stream_response() below)."""
+_MARKDOWN_UPDATE_INTERVAL = 1 / 15  # matches the old Live(refresh_per_second=15)
+
+
+async def _consume_stream(llm_with_tools, messages, live, *, reasoning: bool) -> list:
+    """Runs the spinner-then-live-Markdown loop, consuming llm_with_tools's
+    async stream. Returns the list of raw chunks (possibly empty if the
+    stream yielded nothing). Raises whatever the model call raises — the
+    caller decides how to handle it (stream_response() below)."""
     chunks = []
     accumulated = ""
-    stream = llm_with_tools.stream(messages, reasoning=True) if reasoning else llm_with_tools.stream(messages)
+    stream = llm_with_tools.astream(messages, reasoning=True) if reasoning else llm_with_tools.astream(messages)
 
-    with console.status("[dim]Thinking...[/dim]", spinner="dots"):
-        for chunk in stream:
+    live.start_spinner("Thinking...")
+    try:
+        async for chunk in stream:
             chunks.append(chunk)
             text = _extract_text(chunk.content)
             if text:
                 accumulated = text
                 break
+    finally:
+        live.stop_spinner()
 
-    with Live(RichMarkdown(accumulated), console=console, refresh_per_second=15) as live:
-        for chunk in stream:
-            text = _extract_text(chunk.content)
-            if text:
-                accumulated += text
-                live.update(RichMarkdown(accumulated))
-            chunks.append(chunk)
+    live.update_markdown(accumulated)
+    last_render = time.monotonic()
+    async for chunk in stream:
+        text = _extract_text(chunk.content)
+        if text:
+            accumulated += text
+            now = time.monotonic()
+            if now - last_render >= _MARKDOWN_UPDATE_INTERVAL:
+                live.update_markdown(accumulated)
+                last_render = now
+        chunks.append(chunk)
+    live.update_markdown(accumulated)  # final unthrottled flush so the tail is never dropped
+    live.finalize_markdown(accumulated)  # promote to real scrollback, clear the live window
     return chunks
 
 
-def stream_response(llm_with_tools, messages, console: Console, *,
-                     session_id: str | None = None, run_id: str | None = None,
-                     turn_index: int | None = None, reasoning: bool = False,
-                     context_window: int | None = None):
+async def stream_response(llm_with_tools, messages, console: Console, live, *,
+                           session_id: str | None = None, run_id: str | None = None,
+                           turn_index: int | None = None, reasoning: bool = False,
+                           context_window: int | None = None):
     """Show a 'Thinking...' spinner until the first content token arrives, then
     stream the rest of the response as live-updating Markdown. Returns the
     accumulated AIMessage (chunks merged), or None if the stream was empty or
@@ -135,12 +159,12 @@ def stream_response(llm_with_tools, messages, console: Console, *,
     view = _compact_messages(messages)
     view = _compact_messages_to_budget(view, context_window)
     try:
-        chunks = _consume_stream(llm_with_tools, view, console, reasoning=use_reasoning)
+        chunks = await _consume_stream(llm_with_tools, view, live, reasoning=use_reasoning)
     except Exception as e:
         if use_reasoning:
             _reasoning_unsupported["flag"] = True
             try:
-                chunks = _consume_stream(llm_with_tools, view, console, reasoning=False)
+                chunks = await _consume_stream(llm_with_tools, view, live, reasoning=False)
             except Exception as e2:
                 console.print(f"[red]Error: {escape(_format_model_error(e2))}[/red]")
                 return None

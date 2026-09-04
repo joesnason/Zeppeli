@@ -78,33 +78,42 @@ PRE_TOOL_HOOKS: dict[str, callable] = {
 }
 ```
 
+`PRE_TOOL_HOOKS`'s **keys** are the registry of which tools are gated —
+its values are no longer directly invocable: `permission_ask()` is `async`
+and needs a `live` argument (`ui/live_region.py`'s `LiveRegion`, or
+`SimpleLive` in one-shot `-p` mode) only available at call time, so
+`build_pre_tool_hooks()` always binds a fresh `live`-bound closure per call
+rather than copying `PRE_TOOL_HOOKS`'s values verbatim.
+
 `run_turn()` (`ui/turn.py`) doesn't read `PRE_TOOL_HOOKS` directly — it calls
-`build_pre_tool_hooks(mode, initial_cwd)` once per turn (right after
+`build_pre_tool_hooks(mode, initial_cwd, live)` once per turn (right after
 `reset_turn_approvals()`) and checks the returned dict for every tool call.
-If a hook is present for a tool, it is invoked with
-`(tool_name, resolved_args, console)` and must return `True` for the tool to
-actually run. If it returns `False` (or the user cancels), the tool is
-skipped and the model receives an explicit `"[<tool_name>] CANCELLED: the
-user denied permission..."` message as the tool result instead of the real
-output — worded deliberately strongly (and reinforced by a rule in
-`SYSTEM_PROMPT`, `core/agent.py`) so the model reports the cancellation
-accurately instead of hallucinating success, which it has been observed to
-do with a milder message.
+If a hook is present for a tool, it is awaited as
+`await hook(tool_name, resolved_args, console)` and must return `True` for
+the tool to actually run (tool invocation itself is offloaded via
+`asyncio.to_thread()` so it never blocks the persistent Application's
+event loop — see `ui/CLAUDE.md`). If it returns `False` (or the user
+cancels), the tool is skipped and the model receives an explicit
+`"[<tool_name>] CANCELLED: the user denied permission..."` message as the
+tool result instead of the real output — worded deliberately strongly
+(and reinforced by a rule in `SYSTEM_PROMPT`, `core/agent.py`) so the
+model reports the cancellation accurately instead of hallucinating
+success, which it has been observed to do with a milder message.
 
 ### Permission modes
 
-`build_pre_tool_hooks(mode, initial_cwd) -> dict[str, callable]` is the
-single dispatch point that decides which hooks (if any) apply, based on the
-mode chosen at launch (`cli.py`'s `--yolo-mode` / `--auto-mode` flags, default
-none of them). The three mode constants live in `ui/permissions.py`:
+`build_pre_tool_hooks(mode, initial_cwd, live) -> dict[str, callable]` is
+the single dispatch point that decides which hooks (if any) apply, based on
+the mode chosen at launch (`cli.py`'s `--yolo-mode` / `--auto-mode` flags,
+default none of them). The three mode constants live in `ui/permissions.py`:
 
 | Mode | Constant | Behavior |
 |------|----------|----------|
-| approval (default) | `MODE_APPROVAL` | Returns `dict(PRE_TOOL_HOOKS)` — every `write_file`/`delete_file` call prompts via `permission_ask()`, exactly as described above. |
+| approval (default) | `MODE_APPROVAL` | Binds a fresh `permission_ask`-calling closure to every tool key in `PRE_TOOL_HOOKS` — every `write_file`/`delete_file` call prompts via `permission_ask()`, exactly as described above. |
 | yolo | `MODE_YOLO` | Returns `{}` — no hooks at all. `hooks.get(tc["name"])` is always `None`, so every tool call runs unguarded, with no prompt of any kind. |
-| auto | `MODE_AUTO` | Returns `write_file`/`delete_file` mapped to a hook built by `_make_auto_hook(initial_cwd)`. |
+| auto | `MODE_AUTO` | Returns `write_file`/`delete_file` mapped to a hook built by `_make_auto_hook(initial_cwd, live)`. |
 
-`_make_auto_hook(initial_cwd)` returns a hook that checks
+`_make_auto_hook(initial_cwd, live)` returns an `async` hook that checks
 `_is_within_cwd(path, initial_cwd)` (resolves both sides with
 `Path.resolve()`, so `..` segments and symlinks are handled correctly): if
 the resolved path is inside `initial_cwd`, it auto-approves with a dim note
@@ -120,8 +129,13 @@ exercises all three modes via `-p`.
 
 `permission_ask()` first checks whether this exact call was already approved
 (see "Approval records" below); if so, it skips straight to `return True`
-with a dim note instead of prompting. Otherwise it renders an interactive
-prompt_toolkit menu with three options:
+with a dim note instead of prompting. Otherwise it shows the same
+interactive menu as always — three options, same behavior — but the
+*mechanism* changed with the persistent-toolbar rendering rewrite: it's now
+an in-Layout modal overlay (`live.ask_menu()`, `ui/live_region.py`) on the
+same persistent `Application` the toolbar lives in, not a second nested
+`Application` (see `ui/CLAUDE.md`'s "Pre-Tool Hooks" section for why the
+old approach can't coexist with a persistent toolbar):
 
 - Prints the pending action (`write to` or `delete`) and target path.
 - Arrow keys move a `▶` selection cursor between **Yes** / **Yes, always
@@ -130,8 +144,9 @@ prompt_toolkit menu with three options:
 - `Esc` moves the cursor to **No** and confirms it — same effect as
   arrowing down to **No** and pressing `Enter`, so the final frame visibly
   shows the selection landing on **No** before the menu closes.
-- `Ctrl-C` also cancels (exits with no selection shown, treated as **No** /
-  deny).
+- `Ctrl-C` exits the whole TUI (one consistent app-wide meaning after the
+  rendering rewrite — see `ui/CLAUDE.md`'s "UI" section) rather than just
+  denying the prompt.
 - Choosing **Yes** or **Yes, always allow (this session)** records an approval
   (turn-scoped or session-scoped respectively) before returning `True`.
   Choosing **No** returns `False` without recording anything.

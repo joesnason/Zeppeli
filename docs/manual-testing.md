@@ -292,15 +292,60 @@ history is unchanged — a bad attachment via `@mention` doesn't consume the
 turn or get sent as text-only either (see `run_turn()`'s `ImageError`
 handling in `ui/turn.py`).
 
-### Known pre-existing limitation, not an image-feature regression
+### 16. Toolbar stays pinned during tool calls and streaming (rendering rewrite)
 
-The `\x1b[A\x1b[2K` used to replace the typed input line with its orange
-echo (`ui/repl.py`) assumes the input occupied exactly one terminal row —
-already inaccurate for a wrapped line before this feature existed. Long
-absolute image paths make wrapping more likely to happen; if you see a
-stray line left behind after attaching an image, check whether it
-reproduces with a long *non-image* message too before treating it as a
-bug in this feature.
+```bash
+python3 cli.py
+> read the largest file in this repo and summarize it
+```
+
+Ask something that forces at least one tool call. Expect: the bottom
+toolbar (`Model: ... | mode`, `Session ID: ... | Ctx: ...`, slash-command
+hints) stays visibly present and continues repainting the *entire* time —
+through the `[tool: ...]` echo, the tool actually running, and the
+streamed Markdown response — never disappearing into plain scrollback and
+never leaving a frozen/stale frame. This is the core behavior this
+rewrite (`ui/repl.py`'s persistent `Application`, `ui/live_region.py`)
+exists to fix; see `ui/CLAUDE.md`'s "UI" section for the full toolbar spec.
+
+### 17. Permission menu shows correctly mid-turn and restores input afterward
+
+```bash
+python3 cli.py
+> create a file called scratch.txt with "hello" in it
+```
+
+In default (approval) mode. Expect: the Yes/Yes-always/No arrow-key menu
+renders in place (same three options, same default **Yes**, same
+Esc-jumps-to-**No** convention as before), the toolbar keeps rendering
+alongside it, and — after choosing an option — the input line and normal
+typing/completion are fully usable again for the next message (confirms
+`ui/live_region.py`'s `LiveRegion.ask_menu()` correctly restores focus/key
+bindings even though it no longer spawns a second `Application`).
+
+### 18. Ctrl+C at any point cleanly exits — never a raw traceback
+
+Try Ctrl+C in three states: idle at the prompt, immediately after
+submitting a message that triggers a slow tool call (mid-tool-execution),
+and while a response is still streaming. Expect the same clean shutdown
+every time (process exits, no traceback) — this is a deliberate change
+from before this rewrite, where Ctrl+C mid-turn was an uncaught crash by
+design; now the whole persistent Application/turn task tears down
+gracefully instead, leaving the same honest `"running"`-status session
+record on disk as a crash used to (see `ui/repl.py`'s `_run_and_persist()`
+docstring).
+
+### 19. One-shot `-p` mode is unaffected
+
+```bash
+python3 cli.py -p "list the files in this directory"
+```
+
+Expect no toolbar (never applicable in `-p` mode), the same live-updating
+streamed Markdown/spinner rendering as before this rewrite (`ui/live_region.py`'s
+`SimpleLive` renders via plain `rich.live.Live`/`console.status()`, no
+`Application` involved at all on this path), and identical exit-code/crash
+behavior for a genuine error.
 
 ### Also worth re-checking after any change here
 

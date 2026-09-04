@@ -441,9 +441,9 @@ def test_main_prompt_mode_writes_one_session_file():
     repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
     repl.get_context_window = lambda *a, **k: None  # no real Ollama call in tests
 
-    def _fake_run_turn(llm_with_tools, messages, user_input, console, initial_cwd,
-                        mode, images=None, session_id=None, run_id=None, reasoning=False,
-                        context_window=None):
+    async def _fake_run_turn(llm_with_tools, messages, user_input, console, live, initial_cwd,
+                              mode, images=None, session_id=None, run_id=None, reasoning=False,
+                              context_window=None):
         messages.append(HumanMessage(content=user_input))
         messages.append(AIMessage(content="hi back"))
 

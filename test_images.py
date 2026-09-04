@@ -15,6 +15,7 @@ Tests whose behavior depends on Pillow being installed are gated and report
 venv that only has the base requirements.
 """
 
+import asyncio
 import base64
 import sys
 import tempfile
@@ -388,18 +389,40 @@ class _FakeConsole:
 
 
 class _FakeLLM:
-    """Stubs .stream() to return no chunks, so stream_response() returns None
-    and run_turn() bails out right after appending the HumanMessage — exactly
-    the point we want to inspect."""
+    """Stubs .astream() to yield no chunks, so stream_response() returns
+    None and run_turn() bails out right after appending the HumanMessage —
+    exactly the point we want to inspect."""
 
-    def stream(self, messages):
-        return iter([])
+    async def astream(self, messages, reasoning=None):
+        return
+        yield  # pragma: no cover — makes this an async generator function
+
+
+class _FakeLive:
+    """No-op stand-in for ui/live_region.py's LiveRegion/SimpleLive — these
+    tests only inspect appended message content/printed errors, never the
+    spinner/streamed-Markdown rendering."""
+
+    def start_spinner(self, label="Thinking..."):
+        pass
+
+    def stop_spinner(self):
+        pass
+
+    def update_markdown(self, markdown_text):
+        pass
+
+    def finalize_markdown(self, markdown_text):
+        pass
+
+    async def ask_menu(self, options, default_idx=0):
+        return None
 
 
 def test_run_turn_without_images_appends_str_content():
     from ui.turn import run_turn
     messages = []
-    run_turn(_FakeLLM(), messages, "hello", _FakeConsole(), ".", "manual", images=None)
+    asyncio.run(run_turn(_FakeLLM(), messages, "hello", _FakeConsole(), _FakeLive(), ".", "manual", images=None))
     assert len(messages) == 1
     assert messages[0].content == "hello"
 
@@ -409,7 +432,8 @@ def test_run_turn_with_image_appends_multipart_content():
     with tempfile.TemporaryDirectory() as d:
         path = _write_png(Path(d))
         messages = []
-        run_turn(_FakeLLM(), messages, "what is this", _FakeConsole(), d, "manual", images=[path])
+        asyncio.run(run_turn(_FakeLLM(), messages, "what is this", _FakeConsole(), _FakeLive(), d, "manual",
+                              images=[path]))
         assert len(messages) == 1
         assert isinstance(messages[0].content, list)
         assert messages[0].content[0]["type"] == "image_url"
@@ -419,7 +443,8 @@ def test_run_turn_bad_image_prints_error_and_appends_nothing():
     from ui.turn import run_turn
     messages = []
     console = _FakeConsole()
-    run_turn(_FakeLLM(), messages, "what is this", console, ".", "manual", images=["/no/such.png"])
+    asyncio.run(run_turn(_FakeLLM(), messages, "what is this", console, _FakeLive(), ".", "manual",
+                          images=["/no/such.png"]))
     assert messages == []
     assert any("Error" in str(line) for line in console.lines)
 

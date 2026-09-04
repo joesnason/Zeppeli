@@ -1,17 +1,43 @@
-"""Interactive REPL: input prompt, toolbar, and the top-level turn loop."""
+"""Interactive REPL: input prompt, toolbar, and the top-level turn loop.
 
+The interactive path runs as one persistent prompt_toolkit Application for
+the whole process (built in _interactive_main_async()) instead of a fresh
+PromptSession.prompt() call per line — that's what keeps the bottom
+toolbar rendering continuously, including during tool-call execution and
+model streaming (previously it disappeared the instant prompt() returned,
+since nothing was left actively rendering it). Model streaming/tool
+execution run as asyncio tasks on that same Application's event loop
+(model calls via .astream(), tool invocation offloaded via
+asyncio.to_thread()) so nothing blocks its repaint. See ui/live_region.py
+for the live-content Window (spinner/streamed Markdown/permission menu)
+that lives alongside the toolbar in the same Layout.
+
+One-shot `-p` mode is unaffected: it shares the same async run_turn()/
+stream_response() implementation (wrapped in one asyncio.run() call) but
+never constructs a persistent Application/toolbar at all — see
+ui/live_region.py's SimpleLive, which renders exactly like the pre-rewrite
+code path on that side."""
+
+import asyncio
 import os
 import pathlib
 import platform
 import re
 import shutil
-import sys
 import time
 import uuid
-from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.styles import Style
+from prompt_toolkit.key_binding import ConditionalKeyBindings, KeyBindings, merge_key_bindings
+from prompt_toolkit.key_binding.defaults import load_key_bindings
+from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout.containers import Float, FloatContainer
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.menus import CompletionsMenu
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.markup import escape
 from rich.rule import Rule
@@ -43,6 +69,7 @@ from core.sessions import (
 )
 from core.images import MAX_SOURCE_BYTES, is_image_path, parse_image_mentions, resolve_image_path
 from .completion import AtPathCompleter
+from .live_region import LiveRegion, SimpleLive
 from .permissions import MODE_APPROVAL, MODE_AUTO, MODE_YOLO, confirm_auto_mode_trust
 from .streaming import _ctx_state
 from .turn import run_turn
@@ -101,7 +128,7 @@ def _stage_image(arg: str, console: Console, initial_cwd: str) -> None:
     cheap validation (existence, extension, size) — full decode/downscale is
     deferred to send time so staging never pays for a resize you might not
     send. Extracted from the REPL loop so it's testable without a live
-    PromptSession."""
+    Application."""
     arg = arg.strip()
     if not arg:
         if _pending_images["paths"]:
@@ -140,17 +167,20 @@ def _take_pending_images() -> list[str]:
     return paths
 
 
-def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
-                      mode, images, session, reasoning=False, context_window=None):
+async def _run_and_persist(llm_with_tools, messages, user_input, console, live, initial_cwd,
+                            mode, images, session, reasoning=False, context_window=None):
     """Run one turn via run_turn(), then record it into `session` and write
     it to disk. Wraps run_turn() rather than modifying it, so ui/turn.py
     keeps no knowledge of persistence — this is the only place that needs
     both `session` and the `messages` list to diff before/after the call.
 
     A "running" stub is appended and saved *before* run_turn() runs, so a
-    process kill mid-turn (e.g. Ctrl+C, which today propagates uncaught out
-    of run_turn()) leaves an honest on-disk record — that run just stays at
-    status "running" with no completedAt, rather than vanishing. Any bug in
+    process kill mid-turn (e.g. Ctrl+C, which cancels this coroutine's task
+    from ui/repl.py's _interactive_main_async()) leaves an honest on-disk
+    record — that run just stays at status "running" with no completedAt,
+    rather than vanishing. asyncio.CancelledError is a BaseException (not
+    Exception), so it propagates straight through the try/except below
+    unswallowed, same as an uncaught KeyboardInterrupt used to. Any bug in
     this bookkeeping itself is swallowed: a persistence bug must never keep
     the user's actual turn (already completed by run_turn() above) from
     landing on screen.
@@ -162,9 +192,9 @@ def _run_and_persist(llm_with_tools, messages, user_input, console, initial_cwd,
     log_run_started(_session_state["id"], run.id, user_input)
 
     t0 = time.monotonic()
-    run_turn(llm_with_tools, messages, user_input, console, initial_cwd, mode, images=images,
-              session_id=_session_state["id"], run_id=run.id, reasoning=reasoning,
-              context_window=context_window)
+    await run_turn(llm_with_tools, messages, user_input, console, live, initial_cwd, mode, images=images,
+                    session_id=_session_state["id"], run_id=run.id, reasoning=reasoning,
+                    context_window=context_window)
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     try:
@@ -235,6 +265,157 @@ def _get_toolbar():
     ]
 
 
+_TOOLBAR_HEIGHT = 3 + len(SLASH_COMMANDS)
+
+
+async def _interactive_main_async(llm_with_tools, messages, history_session, initial_cwd,
+                                   context_window, reasoning_enabled, console):
+    """Builds and runs the one persistent Application for the whole
+    interactive session. Never returns except on quit/EOF/Ctrl+C (all
+    treated as a clean exit) or a genuine unhandled exception (propagates
+    up to main()'s own log_cli_error/re-raise wrapping, unchanged)."""
+    live = LiveRegion()
+    input_queue: asyncio.Queue = asyncio.Queue()
+
+    input_buffer = Buffer(completer=AtPathCompleter(), complete_while_typing=False, multiline=False)
+
+    def _accept(buf):
+        input_queue.put_nowait(buf.text)
+        buf.reset()
+        return False
+
+    input_buffer.accept_handler = _accept
+
+    live_window = Window(
+        content=FormattedTextControl(live.get_content, focusable=True),
+        height=Dimension(min=0, max=15),
+    )
+    live.set_content_window(live_window)
+
+    toolbar_window = Window(height=_TOOLBAR_HEIGHT, content=FormattedTextControl(_get_toolbar))
+
+    input_window = Window(
+        height=1,
+        content=BufferControl(buffer=input_buffer),
+        get_line_prefix=lambda line_number, wrap_count: [("fg:#ff8700 bold", "> ")],
+    )
+
+    body = HSplit([live_window, input_window, toolbar_window])
+    root = FloatContainer(
+        content=body,
+        floats=[Float(xcursor=True, ycursor=True, content=CompletionsMenu(max_height=6))],
+    )
+
+    _ctrl_c_kb = KeyBindings()
+
+    @_ctrl_c_kb.add("c-c")
+    def _(event):
+        # Ctrl+C, at any point (idle, mid-tool-call, mid-stream): cleanly
+        # shut down the whole TUI and exit — not a hard crash, and not
+        # "cancel just this turn and stay open." One consistent behavior
+        # regardless of when it fires. Registered on its own always-active
+        # KeyBindings (not gated by menu_active) so it works identically
+        # whether or not a permission menu is currently showing.
+        event.app.exit()
+
+    menu_active = Condition(lambda: live.menu_active)
+    normal_bindings = merge_key_bindings([load_key_bindings(), _kb])
+    kb = merge_key_bindings([
+        ConditionalKeyBindings(normal_bindings, filter=~menu_active),
+        ConditionalKeyBindings(live.menu_key_bindings, filter=menu_active),
+        _ctrl_c_kb,
+    ])
+
+    app = Application(
+        layout=Layout(root, focused_element=input_buffer),
+        key_bindings=kb,
+        full_screen=False,
+        mouse_support=False,
+    )
+    live.set_app(app)
+
+    _loop_error: list[BaseException] = []
+
+    async def _turn_loop():
+        # A genuine bug here must not silently hang the app (nothing else
+        # awaits this task until shutdown) — tear the Application down too
+        # so main()'s own log_cli_error/re-raise wrapping (unchanged) still
+        # sees it, same as an uncaught exception used to crash the process
+        # before this rewrite.
+        try:
+            console.print(Rule())
+            while True:
+                user_input = (await input_queue.get()).strip()
+
+                if not user_input:
+                    console.print(Rule())
+                    continue
+                if user_input.lower() in ("quit", "exit", "/exit", "/quit"):
+                    return
+
+                if user_input.lower().startswith("/image"):
+                    _stage_image(user_input[len("/image"):].strip(), console, initial_cwd)
+                    console.print(Rule())
+                    continue
+
+                text, mentioned = parse_image_mentions(user_input)
+                images = [resolve_image_path(p, initial_cwd)
+                          for p in _take_pending_images() + mentioned]
+
+                live.print_line(FormattedText([("fg:#ff8700 bold", f"> {user_input}")]))
+                for p in images:
+                    console.print(f"[dim]  [image: {escape(_display_path(p, initial_cwd))}][/dim]")
+                console.print()
+
+                await _run_and_persist(llm_with_tools, messages, text, console, live, initial_cwd,
+                                        _mode_state["mode"], images=images, session=history_session,
+                                        reasoning=reasoning_enabled, context_window=context_window)
+                console.print(Rule())
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:
+            _loop_error.append(e)
+        finally:
+            # Reaching here via CancelledError almost always means the
+            # Application is already mid-shutdown (e.g. Ctrl+C's handler
+            # already called app.exit(), which is what triggered this
+            # task's cancellation in the first place) — app.exit() can
+            # still raise "Application is not running" in that race even
+            # though is_done hasn't flipped yet; harmless to swallow since
+            # shutdown is already underway either way.
+            try:
+                if not app.is_done:
+                    app.exit()
+            except Exception:
+                pass
+
+    loop_task = asyncio.create_task(_turn_loop())
+    try:
+        # raw=True: patch_stdout()'s default (False) escapes/strips vt100
+        # terminal escape sequences from anything written to the patched
+        # stdout, to protect the running Application from a stray print()
+        # corrupting its screen — but every console.print() call in this
+        # codebase (Rule(), the [tool: ...] echoes, etc.) legitimately
+        # relies on Rich's own raw ANSI color codes, which that sanitizing
+        # otherwise mangles into literal `?[92m`-style garbage. raw=True
+        # routes through Output.write_raw() instead, passing them through
+        # untouched.
+        with patch_stdout(raw=True):
+            await app.run_async()
+    except EOFError:
+        pass
+    finally:
+        loop_task.cancel()
+        try:
+            await loop_task
+        except asyncio.CancelledError:
+            pass
+
+    if _loop_error:
+        raise _loop_error[0]
+    console.print("\nBye!")
+
+
 def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
          model: str | None = None, base_url: str | None = None, api_key: str | None = None,
          images: list[str] | None = None):
@@ -294,8 +475,8 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
         # history) so even a session that never completes a turn still
         # leaves a file. Same code path for interactive and one-shot -p —
         # see docs/sessions.md. Named history_session (not `session`)
-        # because the PromptSession object below is conventionally called
-        # `session` in this REPL loop already.
+        # because it's conventionally called `session` elsewhere in this
+        # REPL already.
         history_session = create_session(_session_state["id"], initial_cwd, _model_state["name"])
         save_session(history_session)
 
@@ -309,12 +490,20 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
         _ctx_limit_state["tokens"] = context_window
 
         if prompt is not None:
-            # One-shot mode: run exactly one turn and exit — no
-            # PromptSession/toolbar (both assume an interactive terminal)
-            # and no REPL loop.
-            _run_and_persist(llm_with_tools, messages, prompt, console, initial_cwd, mode,
-                              images=_take_pending_images(), session=history_session,
-                              reasoning=reasoning_enabled, context_window=context_window)
+            # One-shot mode: run exactly one turn and exit — no persistent
+            # Application/toolbar (both assume an interactive terminal),
+            # no REPL loop. run_turn()/stream_response() are async (shared
+            # with the interactive path, for tool-call-doesn't-block-the-
+            # toolbar reasons that don't apply here), so wrap the one call
+            # in asyncio.run(); SimpleLive renders exactly like the
+            # pre-rewrite code did on this path (plain rich.live.Live/
+            # console.status(), no Application involved at all).
+            live = SimpleLive(console)
+            asyncio.run(_run_and_persist(
+                llm_with_tools, messages, prompt, console, live, initial_cwd, mode,
+                images=_take_pending_images(), session=history_session,
+                reasoning=reasoning_enabled, context_window=context_window,
+            ))
             # -p is meant to be deterministic/scriptable — a caller may read
             # the session file the instant this process exits, so flush
             # explicitly rather than relying on atexit's timing. The
@@ -325,72 +514,14 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
             flush_pending_events()
             return
 
-        _toolbar_style = Style.from_dict({
-            "bottom-toolbar": "bg:default fg:default noreverse",
-        })
-        session = PromptSession(
-            bottom_toolbar=_get_toolbar, style=_toolbar_style, key_bindings=_kb,
-            completer=AtPathCompleter(),
-            # Tab-triggered only — the default (True) pops a completion
-            # menu on every keystroke after "@" and fights the bottom
-            # toolbar for rows.
-            complete_while_typing=False,
-            # Default is 8 reserved rows, which is exactly the blank-line
-            # artifact the toolbar's fixed-height padding (above) exists to
-            # prevent. Keep this small and verify manually after any change
-            # here — see docs/manual-testing.md.
-            reserve_space_for_menu=4,
-        )
-        # prompt_toolkit's default timeoutlen (1.0s) waits after a lone Esc
-        # to see if it's actually the start of an Alt-combo sequence
-        # (Alt+key is sent as ESC + key on a raw terminal; prompt_toolkit's
-        # built-in emacs bindings register several, e.g. Alt+F/Alt+B word
-        # nav, even though this app's own key_bindings never use one). We
-        # don't rely on any of those, so there's nothing worth waiting for
-        # — flush immediately.
-        session.app.timeoutlen = 0
-
-        while True:
-            console.print(Rule())
-            try:
-                user_input = session.prompt(
-                    FormattedText([("fg:#ff8700 bold", "> ")]),
-                ).strip()
-            except (KeyboardInterrupt, EOFError):
-                console.print("\nBye!")
-                break
-
-            if not user_input:
-                continue
-            if user_input.lower() in ("quit", "exit", "/exit", "/quit"):
-                console.print("Bye!")
-                break
-
-            if user_input.lower().startswith("/image"):
-                sys.stdout.write("\x1b[A\x1b[2K")
-                sys.stdout.flush()
-                _stage_image(user_input[len("/image"):].strip(), console, initial_cwd)
-                continue
-
-            text, mentioned = parse_image_mentions(user_input)
-            images = [resolve_image_path(p, initial_cwd)
-                      for p in _take_pending_images() + mentioned]
-
-            # Replace the typed line with the orange version
-            sys.stdout.write("\x1b[A\x1b[2K")
-            sys.stdout.flush()
-            console.print(f"[bold orange1]> {escape(user_input)}[/bold orange1]")
-            for p in images:
-                console.print(f"[dim]  [image: {escape(_display_path(p, initial_cwd))}][/dim]")
-            console.print()
-
-            _run_and_persist(llm_with_tools, messages, text, console, initial_cwd,
-                              _mode_state["mode"], images=images, session=history_session,
-                              reasoning=reasoning_enabled, context_window=context_window)
+        asyncio.run(_interactive_main_async(
+            llm_with_tools, messages, history_session, initial_cwd,
+            context_window, reasoning_enabled, console,
+        ))
     except Exception as e:
-        # Genuine unexpected bugs only — the loop above already catches
-        # KeyboardInterrupt/EOFError itself (a clean exit, not an error) and
-        # never lets them escape to here. Re-raise after logging so today's
-        # crash/exit-code behavior is unchanged; this only adds a record.
+        # Genuine unexpected bugs only — the interactive path's own
+        # quit/EOF/Ctrl+C handling never lets those reach here as
+        # exceptions. Re-raise after logging so today's crash/exit-code
+        # behavior is unchanged; this only adds a record.
         log_cli_error(_session_state["id"], e)
         raise

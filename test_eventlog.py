@@ -19,6 +19,7 @@ Covers:
   for any other caller
 """
 
+import asyncio
 import io
 import json
 import sys
@@ -42,6 +43,7 @@ from core.eventlog import (
     log_run_started,
     log_session_started,
 )
+from ui.live_region import SimpleLive
 from ui.streaming import stream_response
 
 _ORIGINAL_LOGS_DIR = eventlog.LOGS_DIR
@@ -395,10 +397,10 @@ def test_writer_thread_survives_a_failed_write():
 # --- ui/streaming.py integration --------------------------------------------
 
 class _FakeStreamingLLM:
-    """Stands in for llm_with_tools: .stream(messages) yields a small
+    """Stands in for llm_with_tools: .astream(messages) yields a small
     sequence of AIMessageChunks with plain-str content and no tool calls."""
 
-    def stream(self, messages):
+    async def astream(self, messages, reasoning=None):
         yield AIMessageChunk(content="hello ")
         yield AIMessageChunk(content="world")
 
@@ -407,9 +409,10 @@ def test_stream_response_emits_model_activity_when_ids_given():
     tmp, restore = _with_tmp_logs_dir()
     try:
         console = Console(file=io.StringIO())
+        live = SimpleLive(console)
         sid, rid = "sess-stream", "run-stream"
-        response = stream_response(_FakeStreamingLLM(), [], console,
-                                    session_id=sid, run_id=rid, turn_index=0)
+        response = asyncio.run(stream_response(_FakeStreamingLLM(), [], console, live,
+                                                session_id=sid, run_id=rid, turn_index=0))
         assert response is not None
         flush_pending_events()
         lines = _read_lines(sid)
@@ -426,8 +429,9 @@ def test_stream_response_omits_model_activity_without_full_identity():
     tmp, restore = _with_tmp_logs_dir()
     try:
         console = Console(file=io.StringIO())
+        live = SimpleLive(console)
         # No session_id/run_id/turn_index — must not write anything, must not raise.
-        response = stream_response(_FakeStreamingLLM(), [], console)
+        response = asyncio.run(stream_response(_FakeStreamingLLM(), [], console, live))
         assert response is not None
         flush_pending_events()
         written = list(eventlog.LOGS_DIR.glob("*.jsonl")) if eventlog.LOGS_DIR.exists() else []

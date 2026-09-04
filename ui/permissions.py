@@ -106,7 +106,15 @@ def _arrow_menu(options: list[str], default_idx: int = 0) -> int | None:
     return app.run()
 
 
-def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
+async def permission_ask(tool_name: str, args: dict, console: Console, live) -> bool:
+    """Async so it can show its Yes/Yes-always/No menu as an in-Layout
+    overlay on the same persistent Application (live.ask_menu()) instead of
+    nesting a second Application.run() — see ui/live_region.py's module
+    docstring for why that's safe here. Must run directly on the main
+    event-loop thread (ui/turn.py's tool loop awaits it in place, never
+    wraps it in asyncio.to_thread()); it manipulates `live`'s
+    Application-wide focus/key-binding state, which isn't thread-safe to
+    touch from a worker thread."""
     path = args.get("path", "")
 
     scope = _approved_scope(tool_name, args)
@@ -118,7 +126,7 @@ def permission_ask(tool_name: str, args: dict, console: Console) -> bool:
     console.print(f"[yellow]  AI wants to {action}:[/yellow] [bold]{path}[/bold]")
 
     scopes = ["turn", "session", "deny"]
-    idx = _arrow_menu(["Yes", "Yes, always allow (this session)", "No"], default_idx=0)
+    idx = await live.ask_menu(["Yes", "Yes, always allow (this session)", "No"], default_idx=0)
     choice = scopes[idx] if idx is not None else "deny"
 
     if choice == "deny":
@@ -139,6 +147,14 @@ def confirm_auto_mode_trust(console: Console) -> bool:
     return idx == 0
 
 
+# Registry of which tools are gated by permission_ask() in approval/auto
+# mode — a tool's presence as a key is what matters; build_pre_tool_hooks()
+# below derives the per-mode hook dict from PRE_TOOL_HOOKS.keys(), always
+# binding to a fresh live-region-bound closure (permission_ask() now needs
+# a `live` argument only available at call time, so the bare function
+# reference here is no longer directly callable/copied verbatim the way it
+# used to be — see build_pre_tool_hooks()). To add a hook for another tool,
+# add one entry here.
 PRE_TOOL_HOOKS: dict[str, callable] = {
     "write_file": permission_ask,
     "delete_file": permission_ask,
@@ -154,22 +170,31 @@ def _is_within_cwd(path: str, cwd: str) -> bool:
         return False
 
 
-def _make_auto_hook(initial_cwd: str) -> callable:
+def _make_auto_hook(initial_cwd: str, live) -> callable:
     """Build an auto-mode hook: auto-approve when the path is inside
     `initial_cwd`, otherwise fall back to the normal interactive prompt."""
 
-    def _auto_hook(tool_name: str, args: dict, console: Console) -> bool:
+    async def _auto_hook(tool_name: str, args: dict, console: Console) -> bool:
         path = args.get("path", "")
         if _is_within_cwd(path, initial_cwd):
             console.print(f"[dim]  ✓ auto-approved (auto-mode): {tool_name} → {path}[/dim]")
             return True
-        return permission_ask(tool_name, args, console)
+        return await permission_ask(tool_name, args, console, live)
 
     return _auto_hook
 
 
-def build_pre_tool_hooks(mode: str, initial_cwd: str) -> dict[str, callable]:
+def _make_approval_hook(live) -> callable:
+    async def _hook(tool_name: str, args: dict, console: Console) -> bool:
+        return await permission_ask(tool_name, args, console, live)
+
+    return _hook
+
+
+def build_pre_tool_hooks(mode: str, initial_cwd: str, live=None) -> dict[str, callable]:
     """Return the PRE_TOOL_HOOKS-shaped dict to use for the given mode.
+    `live` (a ui/live_region.py LiveRegion) is threaded through to whichever
+    hook ends up calling permission_ask() — unused when mode is MODE_YOLO.
 
     - MODE_YOLO: no hooks at all — every call runs unguarded, identical to
       having no PRE_TOOL_HOOKS entries.
@@ -180,6 +205,7 @@ def build_pre_tool_hooks(mode: str, initial_cwd: str) -> dict[str, callable]:
     if mode == MODE_YOLO:
         return {}
     if mode == MODE_AUTO:
-        hook = _make_auto_hook(initial_cwd)
-        return {"write_file": hook, "delete_file": hook}
-    return dict(PRE_TOOL_HOOKS)
+        hook = _make_auto_hook(initial_cwd, live)
+        return {name: hook for name in PRE_TOOL_HOOKS}
+    hook = _make_approval_hook(live)
+    return {name: hook for name in PRE_TOOL_HOOKS}

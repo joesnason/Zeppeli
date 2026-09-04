@@ -20,6 +20,7 @@ Regression coverage for two separate bugs:
    None instead.
 """
 
+import asyncio
 import io
 import sys
 
@@ -27,7 +28,15 @@ from langchain_core.messages import AIMessageChunk
 from rich.console import Console
 
 import ui.streaming as streaming
+from ui.live_region import SimpleLive
 from ui.streaming import _extract_text, _format_model_error, stream_response
+
+
+def _run(coro):
+    """asyncio.run() shorthand — stream_response() is async (model calls
+    use .astream() so tool-call execution doesn't block the persistent
+    Application's event loop; see ui/repl.py)."""
+    return asyncio.run(coro)
 
 
 def test_extract_text_plain_str():
@@ -64,14 +73,16 @@ def test_extract_text_none():
 
 
 class _RaisingLLM:
-    """Stands in for llm_with_tools: .stream(messages) raises immediately,
-    same as litellm surfacing a provider error before yielding any chunk."""
+    """Stands in for llm_with_tools: .astream(messages) raises on first
+    iteration, same as litellm surfacing a provider error before yielding
+    any chunk."""
 
     def __init__(self, exc):
         self._exc = exc
 
-    def stream(self, messages):
+    async def astream(self, messages, reasoning=None):
         raise self._exc
+        yield  # pragma: no cover — makes this an async generator function
 
 
 def test_format_model_error_context_window_exceeded_gets_friendly_hint():
@@ -126,37 +137,39 @@ def test_format_model_error_vllm_zero_image_limit_gets_friendly_hint():
 
 def test_stream_response_returns_none_on_raise_instead_of_propagating():
     console = Console(file=io.StringIO())
+    live = SimpleLive(console)
     llm = _RaisingLLM(RuntimeError("connection reset"))
-    result = stream_response(llm, [], console)
+    result = _run(stream_response(llm, [], console, live))
     assert result is None
     assert "connection reset" in console.file.getvalue()
 
 
 class _ReasoningAwareLLM:
     """Stands in for llm_with_tools: records whether reasoning=True was
-    passed on each .stream() call (self.calls, one bool per call — True iff
-    reasoning=True was explicitly passed) and yields a trivial one-chunk
-    response. fail_when_reasoning=True raises instead, on any call that
-    passes reasoning=True — simulating a model/backend that doesn't
-    support it."""
+    passed on each .astream() call (self.calls, one bool per call — True
+    iff reasoning=True was explicitly passed) and yields a trivial
+    one-chunk response. fail_when_reasoning=True raises instead, on any
+    call that passes reasoning=True — simulating a model/backend that
+    doesn't support it."""
 
     def __init__(self, fail_when_reasoning=False):
         self.fail_when_reasoning = fail_when_reasoning
         self.calls = []
 
-    def stream(self, messages, reasoning=None):
+    async def astream(self, messages, reasoning=None):
         used_reasoning = reasoning is True
         self.calls.append(used_reasoning)
         if used_reasoning and self.fail_when_reasoning:
             raise RuntimeError("this model does not support reasoning mode")
-        return iter([AIMessageChunk(content="ok")])
+        yield AIMessageChunk(content="ok")
 
 
 def test_stream_response_passes_reasoning_true_when_requested():
     streaming._reasoning_unsupported["flag"] = False
     console = Console(file=io.StringIO())
+    live = SimpleLive(console)
     llm = _ReasoningAwareLLM()
-    result = stream_response(llm, [], console, reasoning=True)
+    result = _run(stream_response(llm, [], console, live, reasoning=True))
     assert result is not None
     assert llm.calls == [True]
 
@@ -164,8 +177,9 @@ def test_stream_response_passes_reasoning_true_when_requested():
 def test_stream_response_reasoning_false_by_default():
     streaming._reasoning_unsupported["flag"] = False
     console = Console(file=io.StringIO())
+    live = SimpleLive(console)
     llm = _ReasoningAwareLLM()
-    result = stream_response(llm, [], console)  # reasoning param omitted
+    result = _run(stream_response(llm, [], console, live))  # reasoning param omitted
     assert result is not None
     assert llm.calls == [False]
 
@@ -173,9 +187,10 @@ def test_stream_response_reasoning_false_by_default():
 def test_stream_response_falls_back_when_reasoning_unsupported():
     streaming._reasoning_unsupported["flag"] = False
     console = Console(file=io.StringIO())
+    live = SimpleLive(console)
     llm = _ReasoningAwareLLM(fail_when_reasoning=True)
     try:
-        result = stream_response(llm, [], console, reasoning=True)
+        result = _run(stream_response(llm, [], console, live, reasoning=True))
         assert result is not None, "should have recovered via the plain retry"
         assert llm.calls == [True, False]  # first attempt with reasoning, then plain
         assert streaming._reasoning_unsupported["flag"] is True
@@ -186,9 +201,10 @@ def test_stream_response_falls_back_when_reasoning_unsupported():
 def test_stream_response_remembers_reasoning_unsupported_across_calls():
     streaming._reasoning_unsupported["flag"] = True  # simulate a prior failed attempt
     console = Console(file=io.StringIO())
+    live = SimpleLive(console)
     llm = _ReasoningAwareLLM(fail_when_reasoning=True)
     try:
-        result = stream_response(llm, [], console, reasoning=True)
+        result = _run(stream_response(llm, [], console, live, reasoning=True))
         assert result is not None
         assert llm.calls == [False]  # skipped straight to plain — no repeated failed retry
     finally:
@@ -198,9 +214,10 @@ def test_stream_response_remembers_reasoning_unsupported_across_calls():
 def test_stream_response_returns_none_when_reasoning_and_fallback_both_fail():
     streaming._reasoning_unsupported["flag"] = False
     console = Console(file=io.StringIO())
+    live = SimpleLive(console)
     llm = _RaisingLLM(RuntimeError("connection reset"))  # raises regardless of kwargs
     try:
-        result = stream_response(llm, [], console, reasoning=True)
+        result = _run(stream_response(llm, [], console, live, reasoning=True))
         assert result is None
         assert "connection reset" in console.file.getvalue()
         assert streaming._reasoning_unsupported["flag"] is True  # still marked, first attempt used reasoning
