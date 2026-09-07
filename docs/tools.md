@@ -14,7 +14,7 @@ TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 ```
 
 `TOOLS` feeds `load_llm()`'s `bind_tools()` call; `TOOLS_BY_NAME` is used by
-`ui/turn.py`'s `run_turn()` (and `test_tool_call.py`'s `run_agent()`) to look
+`ui/turn.py`'s `run_turn()` (and `tests/test_tool_call.py`'s `run_agent()`) to look
 up and invoke a tool by name once the model requests a call.
 
 ## Path resolution
@@ -224,7 +224,7 @@ preserved in `ToolMessage.additional_kwargs["full_output"]`, which
 `core/sessions.py`'s `append_history_from_messages()` and
 `core/eventlog.py`'s `build_turns_and_outputs()` both read in preference to
 `.content` (falling back to `.content` for any `ToolMessage` built without
-`full_output`, e.g. `test_tool_call.py`'s own direct construction) — so
+`full_output`, e.g. `tests/test_tool_call.py`'s own direct construction) — so
 session history (`~/.zeppeli/sessions/`) and the event log
 (`~/.zeppeli/logs/`) always record the complete, untruncated tool output
 even when the model itself only saw a trimmed version.
@@ -374,7 +374,7 @@ p.unlink()
    the docstring is what the model sees as the tool description.
 2. Add it to the `TOOLS` list in `core/tools.py` — this alone updates
    `TOOLS_BY_NAME` and `load_llm()`'s `bind_tools()` call, so `cli.py`,
-   `ui/turn.py`, and `test_tool_call.py` all pick it up automatically.
+   `ui/turn.py`, and `tests/test_tool_call.py` all pick it up automatically.
 3. Describe it in `SYSTEM_PROMPT` (`core/agent.py`) so the model knows when to
    reach for it.
 4. If it takes a filesystem path argument, add an entry to `PATH_ARGS`

@@ -194,7 +194,7 @@ short session id — these were decided explicitly rather than guessed:
 
 ## Testing
 
-`test_sessions.py` covers the data shapes, message-conversion rules
+`tests/test_sessions.py` covers the data shapes, message-conversion rules
 (including multi-tool-call splitting and the `ok` heuristic), run
 classification, atomic-write behavior (including that `save_session()`
 swallows a write failure), the write queue itself (`save_session()` doesn't
@@ -205,7 +205,7 @@ integration test asserting `ui.repl.main()` writes exactly one, fully
 up-to-date session file per process (relying on the one-shot branch's
 explicit `flush_pending_writes()` call) — all with
 `core.sessions.SESSIONS_DIR` redirected to a temp directory, no Ollama or
-network dependency. `test_permission_modes.py`'s existing tests that call
+network dependency. `tests/test_permission_modes.py`'s existing tests that call
 `repl.main()` for real also redirect `SESSIONS_DIR` for the same reason —
 see that file's module docstring.
 

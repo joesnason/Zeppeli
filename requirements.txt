@@ -6,3 +6,4 @@ ollama>=0.6.2
 rich>=15.0.0
 prompt_toolkit>=3.0.53
 Pillow>=10.4.0
+pytest>=8.0

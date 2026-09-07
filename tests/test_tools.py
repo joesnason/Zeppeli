@@ -11,7 +11,6 @@ accompanying fix in ui/streaming.py (model-call errors no longer crash the
 process).
 """
 
-import sys
 import tempfile
 from pathlib import Path
 
@@ -42,24 +41,3 @@ def test_rg_search_no_matches_unaffected_by_cap():
         f.write_text("all good\n")
         result = rg_search.invoke({"pattern": "error:", "path": str(f), "max_bytes": 10})
         assert result == "(no matches)"
-
-
-TESTS = [
-    test_rg_search_under_cap_not_truncated,
-    test_rg_search_over_cap_is_truncated_with_note,
-    test_rg_search_no_matches_unaffected_by_cap,
-]
-
-
-if __name__ == "__main__":
-    failures = []
-    for t in TESTS:
-        try:
-            t()
-            print(f"[PASS] {t.__name__}")
-        except Exception as e:
-            print(f"[FAIL] {t.__name__}: {e}")
-            failures.append(t.__name__)
-
-    print(f"\n{len(TESTS) - len(failures)}/{len(TESTS)} passed")
-    sys.exit(1 if failures else 0)

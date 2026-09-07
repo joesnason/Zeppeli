@@ -9,23 +9,23 @@ confidence, especially after touching `ui/permissions.py`, `ui/turn.py`, or
 
 (For `--base-url`/`--model`/`--api-key` cloud-model config and
 `core.agent.load_llm()`'s backend branching — a separate concern from
-permission modes — see `test_model_config.py` and
+permission modes — see `tests/test_model_config.py` and
 [`docs/models.md`](models.md) instead.)
 
-## Automated: `test_permission_modes.py`
+## Automated: `tests/test_permission_modes.py`
 
 ```bash
-python3 test_permission_modes.py
+pytest tests/test_permission_modes.py
 ```
 
 No Ollama process needs to be running — the script never imports `core`
 or touches the model, only `cli._parse_args()` and `ui/permissions.py`'s
-internals directly. Framework-free (`assert` + print, matching
-`test_tool_call.py`'s style), but unlike that script it exits non-zero on
-failure, so it's safe to wire into CI.
+internals directly. Runs under pytest (fixtures — `monkeypatch`,
+`tmp_path`, the shared `tmp_zeppeli_dirs` from `tests/conftest.py` —
+replace the old hand-rolled monkeypatch/restore boilerplate), and exits
+non-zero on failure, so it's safe to wire into CI.
 
-It covers, with plain `[PASS]`/`[FAIL] <name>: <error>` output per test and
-an `N/M passed` summary:
+It covers:
 
 - `build_pre_tool_hooks(mode, cwd)` for all three modes — yolo returns `{}`,
   approval returns the real `PRE_TOOL_HOOKS` mapping, auto returns one
@@ -44,14 +44,14 @@ an `N/M passed` summary:
   declining in interactive auto mode skips `load_llm()` entirely, and
   one-shot `-p` mode never calls `confirm_auto_mode_trust()` at all
 
-Expect `19/19 passed`, exit code `0`. A failure here means the permission
+Expect `24 passed`, exit code `0`. A failure here means the permission
 dispatch logic itself broke — fix that before bothering with the manual
 checklist below.
 
-## Automated: `test_images.py`
+## Automated: `tests/test_images.py`
 
 ```bash
-python3 test_images.py
+pytest tests/test_images.py
 ```
 
 No Ollama/network dependency. Covers `core/images.py`'s `@`-mention
@@ -64,9 +64,10 @@ confirm both backends accept the exact block shape this project sends
 (`[SKIP]` if either package isn't installed) — see
 [`docs/models.md`](models.md#vision--image-input).
 
-Expect `44/44 passed (0 skipped)` with the full `requirements.txt`
-installed. A failure here means the image pipeline broke — fix that before
-the manual checklist below.
+Expect `44 passed` with the full `requirements.txt` installed (pytest
+reports any Pillow/langchain-optional gate as `skipped`, not folded into
+failures, if it triggers in a partial venv). A failure here means the
+image pipeline broke — fix that before the manual checklist below.
 
 ## Manual: against the live model
 

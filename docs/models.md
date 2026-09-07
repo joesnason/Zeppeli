@@ -111,7 +111,7 @@ first chunk.
 `_extract_text(content)` flattens either shape (`str`, or `list` of
 `str`/`{"type": "text", "text": ...}` dicts, ignoring other block types)
 into plain text; `stream_response()` calls it on every chunk instead of
-using `chunk.content` directly. Covered by `test_streaming.py`, no live
+using `chunk.content` directly. Covered by `tests/test_streaming.py`, no live
 endpoint required.
 
 ## Vision / image input
@@ -136,7 +136,7 @@ backends unchanged**:
   blocks or other unrecognized dict formats unchanged" branch — the block
   reaches litellm, and therefore the `hosted_vllm/` endpoint, byte-for-byte
   as constructed. Verified directly against the installed package (not just
-  read from source) — see `test_images.py`'s
+  read from source) — see `tests/test_images.py`'s
   `test_litellm_message_conversion_passes_list_content` — and end-to-end
   against a mock OpenAI-compatible server capturing the actual HTTP request
   body.
@@ -235,7 +235,7 @@ no toolbar exists there to show it. Any failure (Ollama unreachable,
 unknown model tag, unexpected response shape) makes the function return
 `None` rather than raise; the toolbar then just omits the suffix.
 
-Covered by `test_model_config.py` with a faked `ollama` module (no live
+Covered by `tests/test_model_config.py` with a faked `ollama` module (no live
 Ollama dependency) for the key-matching and error-handling logic. **Not**
 covered automatically: whether Ollama's real `/api/show` response for a
 model you actually run still follows the `<family>.context_length` key
@@ -294,7 +294,7 @@ never `messages` itself — to the model. See
 is safe with respect to session/event-log persistence, which reads the
 canonical, uncompacted `messages` list exclusively.
 
-Covered by `test_compaction.py`: turn-counting/grouping correctness at and
+Covered by `tests/test_compaction.py`: turn-counting/grouping correctness at and
 above the threshold, preamble handling, a multi-hop tool-call turn
 surviving intact when kept vs. dropped as a whole unit when not, non-
 mutation of the input list, and an integration test on `stream_response()`
@@ -371,7 +371,7 @@ one-shot early return), so `-p` mode never made this call at all. This adds
 one extra local `ollama.show()` round-trip to every one-shot invocation
 using a local Ollama model.
 
-Covered by `test_compaction.py`: below/at-threshold unchanged, the
+Covered by `tests/test_compaction.py`: below/at-threshold unchanged, the
 first+latest-6+summary shape once triggered, the ≤7-turn floor case, role
 labels and tool-name resolution in the summary (including a multi-tool-call
 hop rendering as one bullet, not two), the 650-char conditional truncation
@@ -383,7 +383,7 @@ stays untouched.
 
 ## Testing
 
-`test_model_config.py` covers all of the flag/env-var resolution logic and
+`tests/test_model_config.py` covers all of the flag/env-var resolution logic and
 `load_llm()`'s branching with no Ollama or network dependency — see
 [`docs/manual-testing.md`](manual-testing.md).
 
@@ -398,7 +398,7 @@ python3 cli.py --base-url <real-url> --model openai/<real-model> --api-key <key>
 ```
 
 The vision path additionally needs a round trip that actually sends image
-bytes — the mock-server check above (`test_images.py`) proves the request
+bytes — the mock-server check above (`tests/test_images.py`) proves the request
 is well-formed, but not that a real vLLM/qwen backend accepts and reads
 it:
 

@@ -16,8 +16,6 @@ additional_kwargs["full_output"] fallback that preserves the untruncated
 original for session/event-log persistence.
 """
 
-import sys
-
 from core.messages import truncate_tool_output, tool_result_ok
 
 
@@ -85,29 +83,3 @@ def test_tool_result_ok_survives_truncation():
     text = "Error: " + "\n".join(f"detail line {i}" for i in range(100))
     result = truncate_tool_output(text)
     assert tool_result_ok(result) is False
-
-
-TESTS = [
-    test_short_output_unchanged,
-    test_exactly_at_boundaries_unchanged,
-    test_empty_string_unchanged,
-    test_line_rule_only,
-    test_char_rule_only,
-    test_both_rules_triggered,
-    test_single_very_long_line_triggers_char_rule_only,
-    test_tool_result_ok_survives_truncation,
-]
-
-
-if __name__ == "__main__":
-    failures = []
-    for t in TESTS:
-        try:
-            t()
-            print(f"[PASS] {t.__name__}")
-        except Exception as e:
-            print(f"[FAIL] {t.__name__}: {e}")
-            failures.append(t.__name__)
-
-    print(f"\n{len(TESTS) - len(failures)}/{len(TESTS)} passed")
-    sys.exit(1 if failures else 0)

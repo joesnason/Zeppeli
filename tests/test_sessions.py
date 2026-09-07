@@ -19,20 +19,17 @@ Covers:
 - StoredSession.to_dict()/from_dict() round-trip
 - an integration test: ui.repl.main(prompt=...) with load_llm/run_turn
   monkeypatched (as test_permission_modes.py already does) plus
-  core.sessions.SESSIONS_DIR redirected to a temp dir, asserting exactly
-  one session-<8char>.json file is created
+  core.sessions.SESSIONS_DIR redirected to a temp dir (via the shared
+  tmp_zeppeli_dirs fixture, tests/conftest.py), asserting exactly one
+  session-<8char>.json file is created
 """
 
 import json
-import sys
-import tempfile
 import time
 import uuid
-from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-import core.eventlog as eventlog
 import core.sessions as sessions
 import ui.repl as repl
 from core.sessions import (
@@ -46,31 +43,6 @@ from core.sessions import (
     short_id,
     start_run,
 )
-
-_ORIGINAL_SESSIONS_DIR = sessions.SESSIONS_DIR
-_ORIGINAL_LOGS_DIR = eventlog.LOGS_DIR
-_ORIGINAL_REPL_LOAD_LLM = repl.load_llm
-_ORIGINAL_REPL_RUN_TURN = repl.run_turn
-_ORIGINAL_REPL_MODEL_SUPPORTS_REASONING = repl.model_supports_reasoning
-_ORIGINAL_REPL_GET_CONTEXT_WINDOW = repl.get_context_window
-
-
-def _with_tmp_sessions_dir():
-    """Context-manager-free helper: returns (tmpdir_obj, restore_fn). Callers
-    must call restore_fn() in a finally block. Also redirects
-    core.eventlog.LOGS_DIR alongside SESSIONS_DIR — any test that drives
-    ui.repl.main() (e.g. test_main_prompt_mode_writes_one_session_file)
-    triggers both, and neither should ever touch the real ~/.zeppeli/."""
-    tmp = tempfile.TemporaryDirectory()
-    sessions.SESSIONS_DIR = Path(tmp.name) / "sessions"
-    eventlog.LOGS_DIR = Path(tmp.name) / "logs"
-
-    def restore():
-        sessions.SESSIONS_DIR = _ORIGINAL_SESSIONS_DIR
-        eventlog.LOGS_DIR = _ORIGINAL_LOGS_DIR
-        tmp.cleanup()
-
-    return tmp, restore
 
 
 def test_short_id_truncates_to_8():
@@ -87,13 +59,9 @@ def test_default_title_root_fallback():
     assert default_title("/") == "/"
 
 
-def test_session_file_path_shape():
-    tmp, restore = _with_tmp_sessions_dir()
-    try:
-        p = session_file_path("a1b2c3d4")
-        assert p == sessions.SESSIONS_DIR / "session-a1b2c3d4.json"
-    finally:
-        restore()
+def test_session_file_path_shape(tmp_zeppeli_dirs):
+    p = session_file_path("a1b2c3d4")
+    assert p == sessions.SESSIONS_DIR / "session-a1b2c3d4.json"
 
 
 def test_create_session_shape():
@@ -270,121 +238,92 @@ def test_finish_run_failed_stream_returned_none_after_tool_hop():
     assert run.status == "failed"
 
 
-def test_save_session_creates_directory_and_valid_json():
-    tmp, restore = _with_tmp_sessions_dir()
+def test_save_session_creates_directory_and_valid_json(tmp_zeppeli_dirs):
+    s = _fresh_session()
+    save_session(s)
+    sessions.flush_pending_writes()
+    path = session_file_path(s.id)
+    assert path.is_file()
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["version"] == 1
+    assert data["id"] == s.id
+    assert data["provider"] == "ollama"
+
+
+def test_save_session_writes_readable_utf8_not_escaped(tmp_zeppeli_dirs):
+    s = _fresh_session()
+    s.title = "8月17日"
+    save_session(s)
+    sessions.flush_pending_writes()
+    raw = session_file_path(s.id).read_text(encoding="utf-8")
+    assert "8月17日" in raw
+    assert "\\u6708" not in raw
+
+
+def test_save_session_no_leftover_temp_files(tmp_zeppeli_dirs):
+    s = _fresh_session()
+    save_session(s)
+    sessions.flush_pending_writes()
+    leftovers = list(sessions.SESSIONS_DIR.glob(".tmp-session-*"))
+    assert leftovers == []
+
+
+def test_save_session_swallows_write_failure(tmp_zeppeli_dirs, monkeypatch):
+    monkeypatch.setattr(
+        sessions, "_write_json_atomic",
+        lambda path, data: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    s = _fresh_session()
+    save_session(s)  # must not raise
+    sessions.flush_pending_writes()  # background thread must not raise either
+
+
+def test_write_json_atomic_raises_and_cleans_up_temp_file(tmp_zeppeli_dirs, monkeypatch):
+    monkeypatch.setattr(
+        json, "dump", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")),
+    )
+    s = _fresh_session()
     try:
-        s = _fresh_session()
-        save_session(s)
-        sessions.flush_pending_writes()
-        path = session_file_path(s.id)
-        assert path.is_file()
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        assert data["version"] == 1
-        assert data["id"] == s.id
-        assert data["provider"] == "ollama"
-    finally:
-        restore()
+        sessions._write_json_atomic(session_file_path(s.id), s.to_dict())
+        assert False, "expected an exception"
+    except ValueError:
+        pass
+    assert not session_file_path(s.id).exists()
+    leftovers = list(sessions.SESSIONS_DIR.glob(".tmp-session-*"))
+    assert leftovers == []
 
 
-def test_save_session_writes_readable_utf8_not_escaped():
-    tmp, restore = _with_tmp_sessions_dir()
-    try:
-        s = _fresh_session()
-        s.title = "8月17日"
-        save_session(s)
-        sessions.flush_pending_writes()
-        raw = session_file_path(s.id).read_text(encoding="utf-8")
-        assert "8月17日" in raw
-        assert "\\u6708" not in raw
-    finally:
-        restore()
-
-
-def test_save_session_no_leftover_temp_files():
-    tmp, restore = _with_tmp_sessions_dir()
-    try:
-        s = _fresh_session()
-        save_session(s)
-        sessions.flush_pending_writes()
-        leftovers = list(sessions.SESSIONS_DIR.glob(".tmp-session-*"))
-        assert leftovers == []
-    finally:
-        restore()
-
-
-def test_save_session_swallows_write_failure():
-    tmp, restore = _with_tmp_sessions_dir()
-    original = sessions._write_json_atomic
-    sessions._write_json_atomic = lambda path, data: (_ for _ in ()).throw(OSError("disk full"))
-    try:
-        s = _fresh_session()
-        save_session(s)  # must not raise
-        sessions.flush_pending_writes()  # background thread must not raise either
-    finally:
-        sessions._write_json_atomic = original
-        restore()
-
-
-def test_write_json_atomic_raises_and_cleans_up_temp_file():
-    tmp, restore = _with_tmp_sessions_dir()
-    original_dump = json.dump
-    json.dump = lambda *a, **k: (_ for _ in ()).throw(ValueError("boom"))
-    try:
-        s = _fresh_session()
-        try:
-            sessions._write_json_atomic(session_file_path(s.id), s.to_dict())
-            assert False, "expected an exception"
-        except ValueError:
-            pass
-        assert not session_file_path(s.id).exists()
-        leftovers = list(sessions.SESSIONS_DIR.glob(".tmp-session-*"))
-        assert leftovers == []
-    finally:
-        json.dump = original_dump
-        restore()
-
-
-def test_save_session_does_not_block_caller():
-    tmp, restore = _with_tmp_sessions_dir()
+def test_save_session_does_not_block_caller(tmp_zeppeli_dirs, monkeypatch):
     original = sessions._write_json_atomic
 
     def _slow_write(path, data):
         time.sleep(0.3)
         original(path, data)
 
-    sessions._write_json_atomic = _slow_write
-    try:
-        s = _fresh_session()
-        t0 = time.monotonic()
-        save_session(s)
-        elapsed = time.monotonic() - t0
-        assert elapsed < 0.1, f"save_session() blocked for {elapsed}s — should return immediately"
-        sessions.flush_pending_writes()
-        assert session_file_path(s.id).is_file()
-    finally:
-        sessions._write_json_atomic = original
-        restore()
+    monkeypatch.setattr(sessions, "_write_json_atomic", _slow_write)
+    s = _fresh_session()
+    t0 = time.monotonic()
+    save_session(s)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 0.1, f"save_session() blocked for {elapsed}s — should return immediately"
+    sessions.flush_pending_writes()
+    assert session_file_path(s.id).is_file()
 
 
-def test_save_session_processes_writes_in_order():
-    tmp, restore = _with_tmp_sessions_dir()
-    try:
-        s = _fresh_session()
-        s.title = "first"
-        save_session(s)
-        s.title = "second"
-        save_session(s)
-        sessions.flush_pending_writes()
-        with open(session_file_path(s.id), encoding="utf-8") as f:
-            data = json.load(f)
-        assert data["title"] == "second"
-    finally:
-        restore()
+def test_save_session_processes_writes_in_order(tmp_zeppeli_dirs):
+    s = _fresh_session()
+    s.title = "first"
+    save_session(s)
+    s.title = "second"
+    save_session(s)
+    sessions.flush_pending_writes()
+    with open(session_file_path(s.id), encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["title"] == "second"
 
 
-def test_writer_thread_survives_a_failed_write():
-    tmp, restore = _with_tmp_sessions_dir()
+def test_writer_thread_survives_a_failed_write(tmp_zeppeli_dirs, monkeypatch):
     original = sessions._write_json_atomic
     calls = {"n": 0}
 
@@ -394,28 +333,20 @@ def test_writer_thread_survives_a_failed_write():
             raise OSError("simulated failure on first write")
         original(path, data)
 
-    sessions._write_json_atomic = _fail_once_then_succeed
-    try:
-        s1 = _fresh_session()
-        s2 = _fresh_session()
-        save_session(s1)  # this one fails inside the writer thread
-        save_session(s2)  # the thread must still process this one
-        sessions.flush_pending_writes()
-        assert not session_file_path(s1.id).exists()
-        assert session_file_path(s2.id).is_file()
-    finally:
-        sessions._write_json_atomic = original
-        restore()
+    monkeypatch.setattr(sessions, "_write_json_atomic", _fail_once_then_succeed)
+    s1 = _fresh_session()
+    s2 = _fresh_session()
+    save_session(s1)  # this one fails inside the writer thread
+    save_session(s2)  # the thread must still process this one
+    sessions.flush_pending_writes()
+    assert not session_file_path(s1.id).exists()
+    assert session_file_path(s2.id).is_file()
 
 
-def test_flush_pending_writes_on_empty_queue_returns_immediately():
-    tmp, restore = _with_tmp_sessions_dir()
-    try:
-        t0 = time.monotonic()
-        sessions.flush_pending_writes()
-        assert time.monotonic() - t0 < 0.1
-    finally:
-        restore()
+def test_flush_pending_writes_on_empty_queue_returns_immediately(tmp_zeppeli_dirs):
+    t0 = time.monotonic()
+    sessions.flush_pending_writes()
+    assert time.monotonic() - t0 < 0.1
 
 
 def test_stored_session_round_trip():
@@ -435,11 +366,10 @@ def test_stored_session_round_trip():
     assert restored.runs[0].stats.turns == s.runs[0].stats.turns
 
 
-def test_main_prompt_mode_writes_one_session_file():
-    tmp, restore = _with_tmp_sessions_dir()
-    repl.load_llm = lambda **k: object()
-    repl.model_supports_reasoning = lambda *a, **k: False  # no real Ollama call in tests
-    repl.get_context_window = lambda *a, **k: None  # no real Ollama call in tests
+def test_main_prompt_mode_writes_one_session_file(tmp_zeppeli_dirs, monkeypatch):
+    monkeypatch.setattr(repl, "load_llm", lambda **k: object())
+    monkeypatch.setattr(repl, "model_supports_reasoning", lambda *a, **k: False)  # no real Ollama call
+    monkeypatch.setattr(repl, "get_context_window", lambda *a, **k: None)  # no real Ollama call
 
     async def _fake_run_turn(llm_with_tools, messages, user_input, console, live, initial_cwd,
                               mode, images=None, session_id=None, run_id=None, reasoning=False,
@@ -447,68 +377,13 @@ def test_main_prompt_mode_writes_one_session_file():
         messages.append(HumanMessage(content=user_input))
         messages.append(AIMessage(content="hi back"))
 
-    repl.run_turn = _fake_run_turn
-    try:
-        repl.main(prompt="hi", mode="approval")
-        files = list(sessions.SESSIONS_DIR.glob("session-*.json"))
-        assert len(files) == 1
-        with open(files[0], encoding="utf-8") as f:
-            data = json.load(f)
-        assert len(data["runs"]) == 1
-        assert data["runs"][0]["status"] == "completed"
-        assert len(data["history"]) == 2
-    finally:
-        repl.load_llm = _ORIGINAL_REPL_LOAD_LLM
-        repl.run_turn = _ORIGINAL_REPL_RUN_TURN
-        repl.model_supports_reasoning = _ORIGINAL_REPL_MODEL_SUPPORTS_REASONING
-        repl.get_context_window = _ORIGINAL_REPL_GET_CONTEXT_WINDOW
-        restore()
+    monkeypatch.setattr(repl, "run_turn", _fake_run_turn)
 
-
-TESTS = [
-    test_short_id_truncates_to_8,
-    test_default_title_basename,
-    test_default_title_root_fallback,
-    test_session_file_path_shape,
-    test_create_session_shape,
-    test_append_history_skips_system_message,
-    test_append_history_human_message,
-    test_append_history_ai_message_no_tool_calls,
-    test_append_history_ai_message_single_tool_call,
-    test_append_history_ai_message_multiple_tool_calls_splits_entries,
-    test_append_history_tool_message_ok,
-    test_append_history_tool_message_error_is_not_ok,
-    test_append_history_tool_message_cancelled_is_not_ok,
-    test_append_history_tool_message_prefers_full_output,
-    test_append_history_tool_message_falls_back_to_content_without_full_output,
-    test_append_history_start_index_offset,
-    test_finish_run_completed,
-    test_finish_run_completed_counts_tool_calls_across_hops,
-    test_finish_run_failed_stream_returned_none_first_hop,
-    test_finish_run_failed_stream_returned_none_after_tool_hop,
-    test_save_session_creates_directory_and_valid_json,
-    test_save_session_writes_readable_utf8_not_escaped,
-    test_save_session_no_leftover_temp_files,
-    test_save_session_swallows_write_failure,
-    test_write_json_atomic_raises_and_cleans_up_temp_file,
-    test_save_session_does_not_block_caller,
-    test_save_session_processes_writes_in_order,
-    test_writer_thread_survives_a_failed_write,
-    test_flush_pending_writes_on_empty_queue_returns_immediately,
-    test_stored_session_round_trip,
-    test_main_prompt_mode_writes_one_session_file,
-]
-
-
-if __name__ == "__main__":
-    failures = []
-    for t in TESTS:
-        try:
-            t()
-            print(f"[PASS] {t.__name__}")
-        except Exception as e:
-            print(f"[FAIL] {t.__name__}: {e}")
-            failures.append(t.__name__)
-
-    print(f"\n{len(TESTS) - len(failures)}/{len(TESTS)} passed")
-    sys.exit(1 if failures else 0)
+    repl.main(prompt="hi", mode="approval")
+    files = list(sessions.SESSIONS_DIR.glob("session-*.json"))
+    assert len(files) == 1
+    with open(files[0], encoding="utf-8") as f:
+        data = json.load(f)
+    assert len(data["runs"]) == 1
+    assert data["runs"][0]["status"] == "completed"
+    assert len(data["history"]) == 2

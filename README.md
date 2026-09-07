@@ -144,14 +144,16 @@ the event schema and lifecycle.
 | `cli.py` | Interactive CLI entry point |
 | `core/` | AI agent/model layer — tool definitions, path resolution, Ollama loading |
 | `ui/` | User interaction layer — REPL loop, streaming/Markdown rendering, permission prompts |
-| `test_tool_call.py` | Batch test script for tool calling |
-| `test_permission_modes.py` | Automated tests for permission-mode logic — no Ollama needed |
-| `test_model_config.py` | Automated tests for model/cloud config resolution — no Ollama/network needed |
-| `test_streaming.py` | Automated tests for chunk-content normalization and model-error handling in streaming — no Ollama/network needed |
-| `test_tools.py` | Automated tests for `rg_search`'s output cap — no Ollama/network needed |
-| `test_images.py` | Automated tests for image attachment (`@path`/`/image`/`--image`) — no Ollama/network needed |
-| `test_sessions.py` | Automated tests for session-history persistence (`core/sessions.py`) — no Ollama/network needed |
-| `test_eventlog.py` | Automated tests for the JSONL event log (`core/eventlog.py`) — no Ollama/network needed |
+| `tests/test_tool_call.py` | Batch test script for tool calling |
+| `tests/test_permission_modes.py` | Automated tests for permission-mode logic — no Ollama needed |
+| `tests/test_model_config.py` | Automated tests for model/cloud config resolution — no Ollama/network needed |
+| `tests/test_streaming.py` | Automated tests for chunk-content normalization and model-error handling in streaming — no Ollama/network needed |
+| `tests/test_tools.py` | Automated tests for `rg_search`'s output cap — no Ollama/network needed |
+| `tests/test_truncation.py` | Automated tests for the generic tool-output line/char cap and its full-record preservation — no Ollama/network needed |
+| `tests/test_compaction.py` | Automated tests for the two-tier conversation-history compaction sent to the model — no Ollama/network needed |
+| `tests/test_images.py` | Automated tests for image attachment (`@path`/`/image`/`--image`) — no Ollama/network needed |
+| `tests/test_sessions.py` | Automated tests for session-history persistence (`core/sessions.py`) — no Ollama/network needed |
+| `tests/test_eventlog.py` | Automated tests for the JSONL event log (`core/eventlog.py`) — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
 | `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), and [`docs/logging.md`](docs/logging.md) |

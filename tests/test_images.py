@@ -17,10 +17,12 @@ venv that only has the base requirements.
 
 import asyncio
 import base64
-import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
+import ui.repl as repl
 from core.images import (
     ImageError,
     IMAGE_EXTS,
@@ -45,13 +47,11 @@ except ImportError:
     _HAS_PILLOW = False
 
 
-class _Skip(Exception):
-    """Raised by a test to report [SKIP] instead of [PASS]/[FAIL]."""
-
-
-def _require_pillow():
-    if not _HAS_PILLOW:
-        raise _Skip("Pillow not installed")
+@pytest.fixture(autouse=True)
+def _reset_pending_images():
+    repl._pending_images["paths"] = []
+    yield
+    repl._pending_images["paths"] = []
 
 
 def _write_png(dir_path: Path, name: str = "img.png") -> str:
@@ -258,8 +258,8 @@ def test_build_content_over_max_images_raises():
 
 # --- downscaling (Pillow-gated) ----------------------------------------------
 
+@pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
 def test_downscale_caps_long_edge_at_1568():
-    _require_pillow()
     from PIL import Image
     import io
     im = Image.new("RGB", (3000, 2000), color=(200, 100, 50))
@@ -274,8 +274,8 @@ def test_downscale_caps_long_edge_at_1568():
         assert max(out.size) <= 1568
 
 
+@pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
 def test_downscale_does_not_upscale_small_image():
-    _require_pillow()
     from PIL import Image
     import io
     im = Image.new("RGB", (50, 40), color=(10, 20, 30))
@@ -290,8 +290,8 @@ def test_downscale_does_not_upscale_small_image():
         assert out.size == (50, 40)
 
 
+@pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
 def test_downscale_preserves_aspect_ratio():
-    _require_pillow()
     from PIL import Image
     import io
     im = Image.new("RGB", (4000, 1000), color=(1, 2, 3))  # 4:1 aspect
@@ -307,8 +307,8 @@ def test_downscale_preserves_aspect_ratio():
         assert abs(ratio - 4.0) < 0.05
 
 
+@pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
 def test_rgba_source_encodes_as_png_and_keeps_alpha():
-    _require_pillow()
     from PIL import Image
     import io
     im = Image.new("RGBA", (20, 20), color=(255, 0, 0, 128))
@@ -324,8 +324,8 @@ def test_rgba_source_encodes_as_png_and_keeps_alpha():
         assert out.mode in ("RGBA", "LA")
 
 
+@pytest.mark.skipif(not _HAS_PILLOW, reason="Pillow not installed")
 def test_opaque_source_encodes_as_jpeg():
-    _require_pillow()
     from PIL import Image
     import io
     im = Image.new("RGB", (20, 20), color=(0, 255, 0))
@@ -341,11 +341,9 @@ def test_opaque_source_encodes_as_jpeg():
 # --- cross-backend: Ollama's own converter accepts our block shape ----------
 
 def test_ollama_converter_accepts_our_block():
-    try:
-        from langchain_ollama.chat_models import ChatOllama
-        from langchain_core.messages import HumanMessage
-    except ImportError:
-        raise _Skip("langchain_ollama not installed")
+    pytest.importorskip("langchain_ollama.chat_models")
+    from langchain_ollama.chat_models import ChatOllama
+    from langchain_core.messages import HumanMessage
 
     with tempfile.TemporaryDirectory() as d:
         path = _write_png(Path(d))
@@ -362,11 +360,9 @@ def test_ollama_converter_accepts_our_block():
 
 
 def test_litellm_message_conversion_passes_list_content():
-    try:
-        from langchain_litellm.chat_models.litellm import _convert_message_to_dict
-        from langchain_core.messages import HumanMessage
-    except ImportError:
-        raise _Skip("langchain_litellm not installed")
+    pytest.importorskip("langchain_litellm.chat_models.litellm")
+    from langchain_litellm.chat_models.litellm import _convert_message_to_dict
+    from langchain_core.messages import HumanMessage
 
     with tempfile.TemporaryDirectory() as d:
         path = _write_png(Path(d))
@@ -479,18 +475,13 @@ def test_cli_image_nonexistent_path_exits_2():
 # --- REPL: /image staging -----------------------------------------------------
 
 def test_image_command_stages_path():
-    import ui.repl as repl
     with tempfile.TemporaryDirectory() as d:
         path = _write_png(Path(d))
-        repl._pending_images["paths"] = []
         repl._stage_image(path, _FakeConsole(), d)
         assert repl._pending_images["paths"] == [resolve_image_path(path, d)]
-        repl._pending_images["paths"] = []
 
 
 def test_image_command_bad_path_stages_nothing_and_reports():
-    import ui.repl as repl
-    repl._pending_images["paths"] = []
     console = _FakeConsole()
     repl._stage_image("/no/such/file.png", console, ".")
     assert repl._pending_images["paths"] == []
@@ -498,7 +489,6 @@ def test_image_command_bad_path_stages_nothing_and_reports():
 
 
 def test_image_command_clear_empties_staging():
-    import ui.repl as repl
     with tempfile.TemporaryDirectory() as d:
         path = _write_png(Path(d))
         repl._pending_images["paths"] = [path]
@@ -507,7 +497,6 @@ def test_image_command_clear_empties_staging():
 
 
 def test_take_pending_images_returns_and_clears():
-    import ui.repl as repl
     repl._pending_images["paths"] = ["/a.png", "/b.png"]
     taken = repl._take_pending_images()
     assert taken == ["/a.png", "/b.png"]
@@ -515,78 +504,9 @@ def test_take_pending_images_returns_and_clears():
 
 
 def test_slash_commands_includes_image():
-    import ui.repl as repl
     assert "/image" in repl.SLASH_COMMANDS
 
 
 def test_toolbar_hint_filters_to_image_on_slash_i():
-    import ui.repl as repl
     matches = [c for c in repl.SLASH_COMMANDS if c.startswith("/i")]
     assert matches == ["/image"]
-
-
-TESTS = [
-    test_parse_no_mentions_returns_text_unchanged,
-    test_parse_single_mention_strips_sigil_keeps_path_text,
-    test_parse_mention_at_start_of_line,
-    test_parse_multiple_mentions_preserve_order,
-    test_parse_non_image_extension_left_untouched,
-    test_parse_email_address_not_treated_as_mention,
-    test_parse_backslash_escaped_space_in_path,
-    test_parse_uppercase_extension_matches,
-    test_parse_trailing_punctuation_stripped,
-    test_parse_tilde_path_mention,
-    test_parse_bare_at_sign_is_not_a_mention,
-    test_resolve_image_path_relative_joins_cwd,
-    test_resolve_image_path_absolute_is_idempotent,
-    test_resolve_image_path_expands_tilde,
-    test_is_image_path_extension_matrix,
-    test_load_image_block_missing_file_raises_imageerror,
-    test_load_image_block_directory_raises_imageerror,
-    test_load_image_block_oversize_source_raises_imageerror,
-    test_load_image_block_non_image_bytes_raises_imageerror,
-    test_load_image_block_unsupported_extension_raises_imageerror,
-    test_build_content_no_images_returns_plain_str,
-    test_build_content_with_image_returns_images_first_then_text,
-    test_build_content_block_shape_matches_openai_spec,
-    test_build_content_dedupes_same_path,
-    test_build_content_over_max_images_raises,
-    test_downscale_caps_long_edge_at_1568,
-    test_downscale_does_not_upscale_small_image,
-    test_downscale_preserves_aspect_ratio,
-    test_rgba_source_encodes_as_png_and_keeps_alpha,
-    test_opaque_source_encodes_as_jpeg,
-    test_ollama_converter_accepts_our_block,
-    test_litellm_message_conversion_passes_list_content,
-    test_run_turn_without_images_appends_str_content,
-    test_run_turn_with_image_appends_multipart_content,
-    test_run_turn_bad_image_prints_error_and_appends_nothing,
-    test_cli_image_flag_repeatable_collects_all,
-    test_cli_image_flag_defaults_to_empty_list,
-    test_cli_image_nonexistent_path_exits_2,
-    test_image_command_stages_path,
-    test_image_command_bad_path_stages_nothing_and_reports,
-    test_image_command_clear_empties_staging,
-    test_take_pending_images_returns_and_clears,
-    test_slash_commands_includes_image,
-    test_toolbar_hint_filters_to_image_on_slash_i,
-]
-
-
-if __name__ == "__main__":
-    failures = []
-    skips = []
-    for t in TESTS:
-        try:
-            t()
-            print(f"[PASS] {t.__name__}")
-        except _Skip as e:
-            print(f"[SKIP] {t.__name__}: {e}")
-            skips.append(t.__name__)
-        except Exception as e:
-            print(f"[FAIL] {t.__name__}: {e}")
-            failures.append(t.__name__)
-
-    ran = len(TESTS) - len(skips)
-    print(f"\n{ran - len(failures)}/{ran} passed ({len(skips)} skipped)")
-    sys.exit(1 if failures else 0)

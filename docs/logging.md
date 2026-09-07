@@ -212,7 +212,7 @@ of rewriting a whole JSON document:
 
 ## Testing
 
-`test_eventlog.py` covers every event type's JSONL shape (including
+`tests/test_eventlog.py` covers every event type's JSONL shape (including
 `run_completed`'s completed/failed variants, `cli_error`'s message-length
 cap, and `session_started.reasoningMode`'s `"enabled"`/`"unavailable"`
 values), `build_turns_and_outputs()` (single and multiple tool calls in
@@ -224,11 +224,11 @@ empty queue), `ui/streaming.py`'s `stream_response()` only emitting
 an integration test asserting a forced exception from `load_llm()` lands
 one `cli_error` line before propagating out of `ui.repl.main()` — all with
 `core.eventlog.LOGS_DIR` redirected to a temp directory, no Ollama or
-network dependency. `test_sessions.py` and `test_permission_modes.py`'s
+network dependency. `tests/test_sessions.py` and `tests/test_permission_modes.py`'s
 existing tests that call `repl.main()` for real also redirect `LOGS_DIR`
 for the same reason.
 
-`test_streaming.py` separately covers the `reasoning=True` mechanics
+`tests/test_streaming.py` separately covers the `reasoning=True` mechanics
 itself: it's passed when requested and omitted by default, the
 once-per-process fallback (`_reasoning_unsupported`) when the first
 attempt raises, that the fallback is remembered across later calls (no

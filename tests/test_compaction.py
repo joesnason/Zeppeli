@@ -23,7 +23,6 @@ list, role-labeled (user/assistant/tool), each item truncated to its first
 
 import asyncio
 import io
-import sys
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from rich.console import Console
@@ -311,40 +310,3 @@ def test_stream_response_applies_budget_tier_when_context_window_given():
     assert any("[Earlier conversation summarized" in getattr(m, "content", "")
                for m in llm.received)
     assert len(messages) == original_len  # caller's own list untouched
-
-
-TESTS = [
-    test_at_or_below_threshold_returns_all_turns_unchanged,
-    test_above_threshold_compacts_to_first_plus_latest_24,
-    test_preamble_always_retained_and_uncounted,
-    test_no_human_message_returns_unchanged,
-    test_multihop_tool_call_turn_survives_intact_when_kept,
-    test_dropped_turn_with_tool_calls_is_dropped_as_a_whole_unit,
-    test_does_not_mutate_input_list,
-    test_returned_view_message_objects_are_shared_not_deep_copied,
-    test_stream_response_passes_compacted_view_to_model_not_full_messages,
-    test_budget_below_threshold_returns_unchanged,
-    test_budget_above_threshold_produces_first_plus_latest_6_plus_summary,
-    test_budget_floor_case_seven_or_fewer_turns_returns_unchanged_even_over_budget,
-    test_budget_summary_role_labels_and_tool_name_resolution,
-    test_budget_summary_multi_tool_call_hop_renders_as_one_bullet,
-    test_summary_truncate_short_text_unchanged,
-    test_summary_truncate_long_text_has_head_tail_and_marker,
-    test_budget_context_window_none_falls_back_to_default,
-    test_budget_does_not_mutate_input_list,
-    test_stream_response_applies_budget_tier_when_context_window_given,
-]
-
-
-if __name__ == "__main__":
-    failures = []
-    for t in TESTS:
-        try:
-            t()
-            print(f"[PASS] {t.__name__}")
-        except Exception as e:
-            print(f"[FAIL] {t.__name__}: {e}")
-            failures.append(t.__name__)
-
-    print(f"\n{len(TESTS) - len(failures)}/{len(TESTS)} passed")
-    sys.exit(1 if failures else 0)

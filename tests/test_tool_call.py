@@ -4,6 +4,11 @@ test_prompts that would trigger them without checking the effect on the local
 filesystem first.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from core import SYSTEM_PROMPT, TOOLS_BY_NAME, load_llm

@@ -22,8 +22,8 @@ Regression coverage for two separate bugs:
 
 import asyncio
 import io
-import sys
 
+import pytest
 from langchain_core.messages import AIMessageChunk
 from rich.console import Console
 
@@ -37,6 +37,13 @@ def _run(coro):
     use .astream() so tool-call execution doesn't block the persistent
     Application's event loop; see ui/repl.py)."""
     return asyncio.run(coro)
+
+
+@pytest.fixture(autouse=True)
+def _reset_reasoning_unsupported():
+    streaming._reasoning_unsupported["flag"] = False
+    yield
+    streaming._reasoning_unsupported["flag"] = False
 
 
 def test_extract_text_plain_str():
@@ -165,7 +172,6 @@ class _ReasoningAwareLLM:
 
 
 def test_stream_response_passes_reasoning_true_when_requested():
-    streaming._reasoning_unsupported["flag"] = False
     console = Console(file=io.StringIO())
     live = SimpleLive(console)
     llm = _ReasoningAwareLLM()
@@ -175,7 +181,6 @@ def test_stream_response_passes_reasoning_true_when_requested():
 
 
 def test_stream_response_reasoning_false_by_default():
-    streaming._reasoning_unsupported["flag"] = False
     console = Console(file=io.StringIO())
     live = SimpleLive(console)
     llm = _ReasoningAwareLLM()
@@ -185,17 +190,13 @@ def test_stream_response_reasoning_false_by_default():
 
 
 def test_stream_response_falls_back_when_reasoning_unsupported():
-    streaming._reasoning_unsupported["flag"] = False
     console = Console(file=io.StringIO())
     live = SimpleLive(console)
     llm = _ReasoningAwareLLM(fail_when_reasoning=True)
-    try:
-        result = _run(stream_response(llm, [], console, live, reasoning=True))
-        assert result is not None, "should have recovered via the plain retry"
-        assert llm.calls == [True, False]  # first attempt with reasoning, then plain
-        assert streaming._reasoning_unsupported["flag"] is True
-    finally:
-        streaming._reasoning_unsupported["flag"] = False  # don't leak into later tests
+    result = _run(stream_response(llm, [], console, live, reasoning=True))
+    assert result is not None, "should have recovered via the plain retry"
+    assert llm.calls == [True, False]  # first attempt with reasoning, then plain
+    assert streaming._reasoning_unsupported["flag"] is True
 
 
 def test_stream_response_remembers_reasoning_unsupported_across_calls():
@@ -203,59 +204,16 @@ def test_stream_response_remembers_reasoning_unsupported_across_calls():
     console = Console(file=io.StringIO())
     live = SimpleLive(console)
     llm = _ReasoningAwareLLM(fail_when_reasoning=True)
-    try:
-        result = _run(stream_response(llm, [], console, live, reasoning=True))
-        assert result is not None
-        assert llm.calls == [False]  # skipped straight to plain — no repeated failed retry
-    finally:
-        streaming._reasoning_unsupported["flag"] = False
+    result = _run(stream_response(llm, [], console, live, reasoning=True))
+    assert result is not None
+    assert llm.calls == [False]  # skipped straight to plain — no repeated failed retry
 
 
 def test_stream_response_returns_none_when_reasoning_and_fallback_both_fail():
-    streaming._reasoning_unsupported["flag"] = False
     console = Console(file=io.StringIO())
     live = SimpleLive(console)
     llm = _RaisingLLM(RuntimeError("connection reset"))  # raises regardless of kwargs
-    try:
-        result = _run(stream_response(llm, [], console, live, reasoning=True))
-        assert result is None
-        assert "connection reset" in console.file.getvalue()
-        assert streaming._reasoning_unsupported["flag"] is True  # still marked, first attempt used reasoning
-    finally:
-        streaming._reasoning_unsupported["flag"] = False
-
-
-TESTS = [
-    test_extract_text_plain_str,
-    test_extract_text_empty_str,
-    test_extract_text_list_of_text_blocks,
-    test_extract_text_list_mixed_with_non_text_blocks,
-    test_extract_text_list_of_plain_strs,
-    test_extract_text_empty_list,
-    test_extract_text_none,
-    test_format_model_error_context_window_exceeded_gets_friendly_hint,
-    test_format_model_error_generic_exception_is_short_and_labeled,
-    test_format_model_error_vision_unsupported_gets_friendly_hint,
-    test_format_model_error_generic_image_word_alone_does_not_trigger_vision_hint,
-    test_format_model_error_vllm_zero_image_limit_gets_friendly_hint,
-    test_stream_response_returns_none_on_raise_instead_of_propagating,
-    test_stream_response_passes_reasoning_true_when_requested,
-    test_stream_response_reasoning_false_by_default,
-    test_stream_response_falls_back_when_reasoning_unsupported,
-    test_stream_response_remembers_reasoning_unsupported_across_calls,
-    test_stream_response_returns_none_when_reasoning_and_fallback_both_fail,
-]
-
-
-if __name__ == "__main__":
-    failures = []
-    for t in TESTS:
-        try:
-            t()
-            print(f"[PASS] {t.__name__}")
-        except Exception as e:
-            print(f"[FAIL] {t.__name__}: {e}")
-            failures.append(t.__name__)
-
-    print(f"\n{len(TESTS) - len(failures)}/{len(TESTS)} passed")
-    sys.exit(1 if failures else 0)
+    result = _run(stream_response(llm, [], console, live, reasoning=True))
+    assert result is None
+    assert "connection reset" in console.file.getvalue()
+    assert streaming._reasoning_unsupported["flag"] is True  # still marked, first attempt used reasoning
