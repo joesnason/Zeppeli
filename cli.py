@@ -10,16 +10,19 @@ Permission mode is chosen once at launch via CLI flag (default: approval):
 combine it with either mode flag as needed.
 
 --base-url/--model/--api-key (each also settable via LITELLM_BASE_URL/
-LITELLM_MODEL/LITELLM_API_KEY) switch to a cloud/self-hosted model via
-litellm instead of local Ollama — see docs/models.md.
+LITELLM_MODEL/LITELLM_API_KEY, or via config.json — flag > env var >
+config.json) switch to a cloud/self-hosted model via litellm instead of
+local Ollama — see docs/models.md.
 
 --image PATH (repeatable) attaches a local image file — see the "Vision /
 image input" section of docs/models.md.
 """
 
 import argparse
+import json
 import os
 import pathlib
+import sys
 
 from core.images import is_image_path
 from ui import MODE_APPROVAL, MODE_AUTO, MODE_YOLO, main
@@ -83,21 +86,87 @@ def _parse_args(argv: list[str] | None = None):
     return _build_parser().parse_args(argv)
 
 
+# Optional git-ignored config file for model/base_url/api_key defaults —
+# see config.json.example. Anchored to this file's own directory (not
+# cwd) so it works regardless of launch directory. Exposed as a module
+# attribute (rather than inlined in _load_config_file) specifically so
+# tests can monkeypatch it to a tmp_path location instead of ever
+# touching a real repo-root file.
+_CONFIG_PATH = pathlib.Path(__file__).parent / "config.json"
+_CONFIG_KEYS = ("model", "base_url", "api_key")
+
+
+def _load_config_file() -> dict:
+    """Load the optional config.json (repo root, next to cli.py) as a
+    dict of model/base_url/api_key defaults — the lowest-precedence tier,
+    below flag and env var. Never raises:
+      - missing file -> {} silently (the common case; most launches won't
+        have one).
+      - unreadable / invalid JSON / not a JSON object -> {} plus a
+        one-line stderr warning — this file is a best-effort convenience
+        layer, not something that should block every future invocation
+        until a stale/corrupt file is noticed and fixed. Flags and env
+        vars remain a full escape hatch either way.
+      - unrecognized top-level keys -> ignored, plus a one-line stderr
+        warning naming them (catches typos like "modle" without blocking
+        startup).
+      - a recognized key whose value isn't a string -> treated as absent
+        for that key, silently.
+    Not cached: reads a tiny local file a handful of times per process
+    startup, deliberately not memoized so tests can monkeypatch
+    _CONFIG_PATH per-test without stale results.
+    """
+    try:
+        text = _CONFIG_PATH.read_text()
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        print(f"warning: could not read {_CONFIG_PATH}: {e}", file=sys.stderr)
+        return {}
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        print(
+            f"warning: {_CONFIG_PATH} is not valid JSON ({e}); ignoring it",
+            file=sys.stderr,
+        )
+        return {}
+
+    if not isinstance(data, dict):
+        print(
+            f"warning: {_CONFIG_PATH} must contain a JSON object; ignoring it",
+            file=sys.stderr,
+        )
+        return {}
+
+    unknown = sorted(set(data) - set(_CONFIG_KEYS))
+    if unknown:
+        print(
+            f"warning: {_CONFIG_PATH} has unrecognized key(s) {unknown}; "
+            f"ignoring them (valid keys: {list(_CONFIG_KEYS)})",
+            file=sys.stderr,
+        )
+
+    return {k: v for k, v in data.items() if k in _CONFIG_KEYS and isinstance(v, str)}
+
+
 def _resolve_base_url(args) -> str | None:
-    return args.base_url or os.environ.get("LITELLM_BASE_URL")
+    return args.base_url or os.environ.get("LITELLM_BASE_URL") or _load_config_file().get("base_url")
 
 
 def _resolve_model(args) -> str | None:
-    return args.model or os.environ.get("LITELLM_MODEL")
+    return args.model or os.environ.get("LITELLM_MODEL") or _load_config_file().get("model")
 
 
 def _resolve_api_key(args) -> str | None:
-    return args.api_key or os.environ.get("LITELLM_API_KEY")
+    return args.api_key or os.environ.get("LITELLM_API_KEY") or _load_config_file().get("api_key")
 
 
 def _resolve_config(args):
-    """Resolve model/base_url/api_key as flag > env var > None, and
-    validate that a resolved base_url always comes with a resolved model."""
+    """Resolve model/base_url/api_key as flag > env var > config.json >
+    None, and validate that a resolved base_url always comes with a
+    resolved model."""
     base_url = _resolve_base_url(args)
     model = _resolve_model(args)
     api_key = _resolve_api_key(args)

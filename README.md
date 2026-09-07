@@ -73,6 +73,11 @@ typing at the input prompt to clear the line back to empty.
   litellm's provider prefix, e.g. `openai/gpt-4o-mini`. Each of the three
   can also be set via `LITELLM_BASE_URL`/`LITELLM_MODEL`/`LITELLM_API_KEY`
   env vars (flag takes precedence). See [`docs/models.md`](docs/models.md).
+- Alternatively, copy `config.json.example` to `config.json` (git-ignored)
+  and fill in `model`/`base_url`/`api_key` there for a persistent local
+  testing default, instead of retyping flags or exporting env vars every
+  run. Precedence is flag > env var > `config.json` > built-in default.
+  See [`docs/models.md`](docs/models.md).
 - `python3 cli.py --image <path>` (repeatable, max 4) — attach a local
   image to the turn. With `-p`, attaches to that one turn; without it,
   attaches to your first REPL message. Requires a vision-capable model
@@ -155,6 +160,7 @@ the event schema and lifecycle.
 | `tests/test_sessions.py` | Automated tests for session-history persistence (`core/sessions.py`) — no Ollama/network needed |
 | `tests/test_eventlog.py` | Automated tests for the JSONL event log (`core/eventlog.py`) — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
+| `config.json.example` | Template for the optional git-ignored `config.json` (local `model`/`base_url`/`api_key` overrides) — see [`docs/models.md`](docs/models.md) |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
 | `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), and [`docs/logging.md`](docs/logging.md) |
 

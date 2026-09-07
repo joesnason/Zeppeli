@@ -1,12 +1,13 @@
 """Automated tests for cloud-model configuration (--base-url/--model/
---api-key and their LITELLM_* env-var fallbacks) plus core.agent.load_llm()'s
-backend-branching logic, core.agent.get_context_window()'s modelinfo
-key-matching/error-handling, and core.agent.model_supports_reasoning()'s
-capabilities-list check/error-handling. No Ollama/network dependency — safe
-to run anytime, exits non-zero on failure. Style matches
-test_permission_modes.py.
+--api-key, their LITELLM_* env-var fallbacks, and the config.json
+lowest-precedence tier) plus core.agent.load_llm()'s backend-branching
+logic, core.agent.get_context_window()'s modelinfo key-matching/error-
+handling, and core.agent.model_supports_reasoning()'s capabilities-list
+check/error-handling. No Ollama/network dependency — safe to run anytime,
+exits non-zero on failure. Style matches test_permission_modes.py.
 """
 
+import json
 import sys
 import types
 
@@ -19,9 +20,15 @@ _ENV_VARS = ("LITELLM_BASE_URL", "LITELLM_MODEL", "LITELLM_API_KEY")
 
 
 @pytest.fixture(autouse=True)
-def _clear_env(monkeypatch):
+def _clear_env(monkeypatch, tmp_path):
     for var in _ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    # Point config.json lookups at a guaranteed-nonexistent path by
+    # default, so no test here ever accidentally reads a real repo-root
+    # config.json a developer may have created for their own local
+    # testing. Tests that need a real config.json write one to this same
+    # path and monkeypatch nothing further.
+    monkeypatch.setattr(cli, "_CONFIG_PATH", tmp_path / "config.json")
 
 
 # --- cli.py: _resolve_config / _resolve_* ---------------------------------
@@ -90,6 +97,88 @@ def test_resolve_api_key_falls_back_to_env(monkeypatch):
 def test_resolve_api_key_returns_none_when_neither_set():
     args = cli._parse_args([])
     assert cli._resolve_api_key(args) is None
+
+
+# --- cli.py: config.json layer ---------------------------------------------
+
+def test_resolve_config_uses_config_file_when_no_flag_or_env():
+    cli._CONFIG_PATH.write_text(json.dumps({"model": "file-model"}))
+    args = cli._parse_args([])
+    model, base_url, api_key = cli._resolve_config(args)
+    assert model == "file-model"
+    assert base_url is None
+    assert api_key is None
+
+
+def test_resolve_config_flag_overrides_config_file():
+    cli._CONFIG_PATH.write_text(json.dumps({"model": "file-model"}))
+    args = cli._parse_args(["--model", "flag-model"])
+    model, _, _ = cli._resolve_config(args)
+    assert model == "flag-model"
+
+
+def test_resolve_config_env_overrides_config_file(monkeypatch):
+    cli._CONFIG_PATH.write_text(json.dumps({"model": "file-model"}))
+    monkeypatch.setenv("LITELLM_MODEL", "env-model")
+    args = cli._parse_args([])
+    model, _, _ = cli._resolve_config(args)
+    assert model == "env-model"
+
+
+def test_resolve_config_missing_config_file_returns_none():
+    # cli._CONFIG_PATH (set by the autouse fixture) points at a
+    # nonexistent tmp_path file, so no config.json write happens here.
+    args = cli._parse_args([])
+    model, base_url, api_key = cli._resolve_config(args)
+    assert model is None
+    assert base_url is None
+    assert api_key is None
+
+
+def test_load_config_file_malformed_json_warns_and_returns_empty(capsys):
+    cli._CONFIG_PATH.write_text("{not valid json")
+    assert cli._load_config_file() == {}
+    err = capsys.readouterr().err
+    assert "not valid JSON" in err
+    assert str(cli._CONFIG_PATH) in err
+
+
+def test_load_config_file_not_a_json_object_warns_and_returns_empty(capsys):
+    cli._CONFIG_PATH.write_text(json.dumps(["not", "an", "object"]))
+    assert cli._load_config_file() == {}
+    assert "must contain a JSON object" in capsys.readouterr().err
+
+
+def test_load_config_file_unknown_keys_ignored_with_warning(capsys):
+    cli._CONFIG_PATH.write_text(json.dumps({"model": "m", "bogus_key": "x"}))
+    data = cli._load_config_file()
+    assert data == {"model": "m"}
+    err = capsys.readouterr().err
+    assert "bogus_key" in err
+
+
+def test_load_config_file_non_string_value_treated_as_absent():
+    cli._CONFIG_PATH.write_text(json.dumps({"model": 123}))
+    assert cli._load_config_file() == {}
+
+
+def test_resolve_config_base_url_from_file_without_model_raises_systemexit_2():
+    cli._CONFIG_PATH.write_text(json.dumps({"base_url": "http://filehost"}))
+    args = cli._parse_args([])
+    try:
+        cli._resolve_config(args)
+        assert False, "expected SystemExit"
+    except SystemExit as e:
+        assert e.code == 2
+
+
+def test_resolve_config_base_url_from_file_with_model_from_env_ok(monkeypatch):
+    cli._CONFIG_PATH.write_text(json.dumps({"base_url": "http://filehost"}))
+    monkeypatch.setenv("LITELLM_MODEL", "openai/env-model")
+    args = cli._parse_args([])
+    model, base_url, api_key = cli._resolve_config(args)
+    assert model == "openai/env-model"
+    assert base_url == "http://filehost"
 
 
 # --- core/agent.py: load_llm() branching -----------------------------------

@@ -18,6 +18,11 @@ build/
 .env.*
 !.env.example
 
+# Local model/API config (see config.json.example) — never commit real
+# API keys or environment-specific model settings.
+config.json
+!config.json.example
+
 # direnv
 .envrc
 .envrc.local

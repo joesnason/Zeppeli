@@ -1,0 +1,5 @@
+{
+  "model": "gemma4:e2b",
+  "base_url": "",
+  "api_key": ""
+}

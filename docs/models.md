@@ -38,27 +38,42 @@ litellm-routed backends give a list of content blocks instead — see
 `_extract_text()` normalizes both shapes before Markdown rendering, so
 callers of `stream_response()` don't need to care which backend loaded.
 
-## CLI flags and env-var fallbacks
+## CLI flags, env-var fallbacks, and config.json
 
-Each of the three cloud-related settings can come from a flag or an env
-var, flag taking precedence (`cli.py`'s `_resolve_base_url()` /
-`_resolve_model()` / `_resolve_api_key()`):
+Each of the three cloud-related settings can come from a flag, an env
+var, or `config.json`, in that precedence order (`cli.py`'s
+`_resolve_base_url()` / `_resolve_model()` / `_resolve_api_key()`):
 
-| Setting | Flag | Env var |
-|---|---|---|
-| Base URL | `--base-url URL` | `LITELLM_BASE_URL` |
-| Model | `--model NAME` | `LITELLM_MODEL` |
-| API key | `--api-key KEY` | `LITELLM_API_KEY` |
+| Setting | Flag | Env var | `config.json` key |
+|---|---|---|---|
+| Base URL | `--base-url URL` | `LITELLM_BASE_URL` | `base_url` |
+| Model | `--model NAME` | `LITELLM_MODEL` | `model` |
+| API key | `--api-key KEY` | `LITELLM_API_KEY` | `api_key` |
 
 `cli.py`'s `_resolve_config(args)` resolves all three (flag > env var >
-`None`) and validates that a resolved `base_url` never shows up without a
-resolved `model` — there's no sensible default model string for a cloud
-endpoint. If that happens, it errors via the same mechanism as the
+`config.json` > `None`) and validates that a resolved `base_url` never
+shows up without a resolved `model` — there's no sensible default model
+string for a cloud endpoint, regardless of which tier `base_url` came
+from. If that happens, it errors via the same mechanism as the
 `--yolo-mode`/`--auto-mode` mutex group: `parser.error(...)`, `SystemExit(2)`,
 usage printed to stderr.
 
-If `api_key` resolves to `None` (no flag, no `LITELLM_API_KEY`), nothing is
-passed to `ChatLiteLLM` at all — litellm then falls back to its own
+`config.json` (repo root, next to `cli.py`, git-ignored — copy
+`config.json.example` to get started) is the lowest-precedence tier,
+meant for local/per-machine testing defaults you don't want to type as
+flags or export as env vars every run — any subset of `model`/
+`base_url`/`api_key` is valid, including an empty `{}` or no file at
+all. `cli.py`'s `_load_config_file()` never raises: a missing file is
+silent (the common case), while an unreadable file, invalid JSON, JSON
+that isn't an object, or unrecognized top-level keys each print a
+one-line warning to stderr and fall back to flag/env/default resolution
+as if the file were absent (or, for unknown keys, as if just those keys
+were absent) — never `SystemExit`, since a stale/corrupt convenience
+file shouldn't block every future launch. A recognized key with a
+non-string value is treated as absent for that key, silently.
+
+If `api_key` resolves to `None` (no flag, no `LITELLM_API_KEY`, no
+`config.json` entry), nothing is passed to `ChatLiteLLM` at all — litellm then falls back to its own
 provider-specific env vars internally (e.g. `OPENAI_API_KEY` for an
 `openai/`-prefixed model). A key is never required.
 
@@ -383,9 +398,9 @@ stays untouched.
 
 ## Testing
 
-`tests/test_model_config.py` covers all of the flag/env-var resolution logic and
-`load_llm()`'s branching with no Ollama or network dependency — see
-[`docs/manual-testing.md`](manual-testing.md).
+`tests/test_model_config.py` covers all of the flag/env-var/config.json
+resolution logic and `load_llm()`'s branching with no Ollama or network
+dependency — see [`docs/manual-testing.md`](manual-testing.md).
 
 An actual end-to-end round trip against a real cloud endpoint
 (`--base-url`/`--model`/`--api-key`, confirming both config resolution and
