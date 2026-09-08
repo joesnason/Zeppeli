@@ -93,36 +93,32 @@ def _parse_args(argv: list[str] | None = None):
 # tests can monkeypatch it to a tmp_path location instead of ever
 # touching a real repo-root file.
 _CONFIG_PATH = pathlib.Path(__file__).parent / "config.json"
-_CONFIG_KEYS = ("model", "base_url", "api_key")
+_CONFIG_KEYS = ("model", "base_url", "api_key", "slack")
+_SLACK_CONFIG_KEYS = ("bot_token", "app_token", "allowed_dir", "allowed_users")
 
 
-def _load_config_file() -> dict:
-    """Load the optional config.json (repo root, next to cli.py) as a
-    dict of model/base_url/api_key defaults — the lowest-precedence tier,
-    below flag and env var. Never raises:
-      - missing file -> {} silently (the common case; most launches won't
-        have one).
-      - unreadable / invalid JSON / not a JSON object -> {} plus a
+def _read_json_config() -> dict | None:
+    """Read + parse _CONFIG_PATH as a JSON object. Never raises:
+      - missing file -> None silently (the common case; most launches
+        won't have one).
+      - unreadable / invalid JSON / not a JSON object -> None plus a
         one-line stderr warning — this file is a best-effort convenience
         layer, not something that should block every future invocation
-        until a stale/corrupt file is noticed and fixed. Flags and env
-        vars remain a full escape hatch either way.
-      - unrecognized top-level keys -> ignored, plus a one-line stderr
-        warning naming them (catches typos like "modle" without blocking
-        startup).
-      - a recognized key whose value isn't a string -> treated as absent
-        for that key, silently.
-    Not cached: reads a tiny local file a handful of times per process
-    startup, deliberately not memoized so tests can monkeypatch
-    _CONFIG_PATH per-test without stale results.
+        until a stale/corrupt file is noticed and fixed.
+    Shared by _load_config_file() (flat model/base_url/api_key keys) and
+    _load_slack_config() (nested "slack" key) so this read/parse/warn
+    logic isn't duplicated between them. Not cached: reads a tiny local
+    file a handful of times per process startup, deliberately not
+    memoized so tests can monkeypatch _CONFIG_PATH per-test without
+    stale results.
     """
     try:
         text = _CONFIG_PATH.read_text()
     except FileNotFoundError:
-        return {}
+        return None
     except OSError as e:
         print(f"warning: could not read {_CONFIG_PATH}: {e}", file=sys.stderr)
-        return {}
+        return None
 
     try:
         data = json.loads(text)
@@ -131,13 +127,33 @@ def _load_config_file() -> dict:
             f"warning: {_CONFIG_PATH} is not valid JSON ({e}); ignoring it",
             file=sys.stderr,
         )
-        return {}
+        return None
 
     if not isinstance(data, dict):
         print(
             f"warning: {_CONFIG_PATH} must contain a JSON object; ignoring it",
             file=sys.stderr,
         )
+        return None
+
+    return data
+
+
+def _load_config_file() -> dict:
+    """Load the optional config.json (repo root, next to cli.py) as a
+    dict of model/base_url/api_key defaults — the lowest-precedence tier,
+    below flag and env var. Never raises:
+      - missing/unreadable/malformed file -> {} (see _read_json_config()).
+      - unrecognized top-level keys -> ignored, plus a one-line stderr
+        warning naming them (catches typos like "modle" without blocking
+        startup). "slack" is a recognized key here too (see
+        _load_slack_config()) so it never triggers this warning, but its
+        value is a dict, not a string, so it's excluded below regardless.
+      - a recognized key whose value isn't a string -> treated as absent
+        for that key, silently.
+    """
+    data = _read_json_config()
+    if data is None:
         return {}
 
     unknown = sorted(set(data) - set(_CONFIG_KEYS))
@@ -149,6 +165,55 @@ def _load_config_file() -> dict:
         )
 
     return {k: v for k, v in data.items() if k in _CONFIG_KEYS and isinstance(v, str)}
+
+
+def _load_slack_config() -> dict:
+    """Load the optional "slack" object from config.json (bot_token,
+    app_token, allowed_dir, allowed_users) — see config.json.example and
+    docs/slack.md. Never raises; stays as best-effort as _load_config_file():
+      - missing "slack" key, or the whole file missing/malformed -> {}.
+      - "slack" present but not a JSON object -> {} plus a warning.
+      - unrecognized nested keys -> ignored, plus a warning naming them.
+      - bot_token/app_token/allowed_dir must be non-empty strings, or
+        they're treated as absent; allowed_users must be a list of
+        strings, or it's dropped (an empty/omitted allowed_users means
+        "anyone is allowed" — see slack_bot/access.py).
+    Unlike _load_config_file(), a missing/invalid result here isn't a
+    silently-tolerable fallback tier — slack_bot.py has no flag/env-var
+    escape hatch for these values, so it's the caller's job to treat a
+    missing bot_token/app_token/allowed_dir as fatal, not this function's.
+    """
+    data = _read_json_config()
+    if data is None:
+        return {}
+
+    slack = data.get("slack")
+    if slack is None:
+        return {}
+    if not isinstance(slack, dict):
+        print(
+            f'warning: {_CONFIG_PATH}\'s "slack" key must be a JSON object; ignoring it',
+            file=sys.stderr,
+        )
+        return {}
+
+    unknown = sorted(set(slack) - set(_SLACK_CONFIG_KEYS))
+    if unknown:
+        print(
+            f'warning: {_CONFIG_PATH}\'s "slack" object has unrecognized key(s) '
+            f'{unknown}; ignoring them (valid keys: {list(_SLACK_CONFIG_KEYS)})',
+            file=sys.stderr,
+        )
+
+    result = {}
+    for key in ("bot_token", "app_token", "allowed_dir"):
+        value = slack.get(key)
+        if isinstance(value, str) and value:
+            result[key] = value
+    users = slack.get("allowed_users")
+    if isinstance(users, list) and all(isinstance(u, str) for u in users):
+        result["allowed_users"] = users
+    return result
 
 
 def _resolve_base_url(args) -> str | None:

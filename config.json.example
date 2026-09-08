@@ -1,5 +1,11 @@
 {
-  "model": "gemma4:e2b",
+  "model": "gemma4:26b-nvfp4",
   "base_url": "",
-  "api_key": ""
+  "api_key": "",
+  "slack": {
+    "bot_token": "",
+    "app_token": "",
+    "allowed_dir": "",
+    "allowed_users": []
+  }
 }

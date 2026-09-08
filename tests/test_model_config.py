@@ -181,6 +181,74 @@ def test_resolve_config_base_url_from_file_with_model_from_env_ok(monkeypatch):
     assert base_url == "http://filehost"
 
 
+# --- cli.py: _load_slack_config() -------------------------------------------
+
+def test_load_slack_config_missing_key_returns_empty():
+    cli._CONFIG_PATH.write_text(json.dumps({"model": "m"}))
+    assert cli._load_slack_config() == {}
+
+
+def test_load_slack_config_missing_file_returns_empty():
+    assert cli._load_slack_config() == {}
+
+
+def test_load_slack_config_reads_all_fields():
+    cli._CONFIG_PATH.write_text(json.dumps({
+        "slack": {
+            "bot_token": "xoxb-1", "app_token": "xapp-1",
+            "allowed_dir": "/tmp/sandbox", "allowed_users": ["U1", "U2"],
+        },
+    }))
+    assert cli._load_slack_config() == {
+        "bot_token": "xoxb-1", "app_token": "xapp-1",
+        "allowed_dir": "/tmp/sandbox", "allowed_users": ["U1", "U2"],
+    }
+
+
+def test_load_slack_config_not_a_dict_warns_and_returns_empty(capsys):
+    cli._CONFIG_PATH.write_text(json.dumps({"slack": "not-a-dict"}))
+    assert cli._load_slack_config() == {}
+    assert '"slack" key must be a JSON object' in capsys.readouterr().err
+
+
+def test_load_slack_config_unknown_nested_key_warns_but_keeps_known_ones(capsys):
+    cli._CONFIG_PATH.write_text(json.dumps({
+        "slack": {"bot_token": "xoxb-1", "bogus": "x"},
+    }))
+    data = cli._load_slack_config()
+    assert data == {"bot_token": "xoxb-1"}
+    assert "bogus" in capsys.readouterr().err
+
+
+def test_load_slack_config_allowed_users_not_a_list_is_dropped():
+    cli._CONFIG_PATH.write_text(json.dumps({
+        "slack": {"bot_token": "xoxb-1", "allowed_users": "U1"},
+    }))
+    data = cli._load_slack_config()
+    assert data == {"bot_token": "xoxb-1"}
+    assert "allowed_users" not in data
+
+
+def test_load_slack_config_allowed_users_with_non_string_items_is_dropped():
+    cli._CONFIG_PATH.write_text(json.dumps({
+        "slack": {"allowed_users": ["U1", 2]},
+    }))
+    assert cli._load_slack_config() == {}
+
+
+def test_load_slack_config_coexists_with_flat_model_config_no_unknown_key_warning(capsys):
+    cli._CONFIG_PATH.write_text(json.dumps({
+        "model": "gemma4:e2b",
+        "slack": {"bot_token": "xoxb-1", "app_token": "xapp-1", "allowed_dir": "/tmp"},
+    }))
+    assert cli._load_config_file() == {"model": "gemma4:e2b"}
+    assert cli._load_slack_config() == {
+        "bot_token": "xoxb-1", "app_token": "xapp-1", "allowed_dir": "/tmp",
+    }
+    err = capsys.readouterr().err
+    assert "unrecognized key" not in err  # "slack" must not be flagged as unrecognized
+
+
 # --- core/agent.py: load_llm() branching -----------------------------------
 
 def test_load_llm_ollama_branch_default_unchanged(monkeypatch):

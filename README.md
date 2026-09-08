@@ -22,6 +22,9 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 - `Pillow` installs by default via `requirements.txt`, used to downscale
   attached images before sending — a small image still works without it,
   see [`docs/models.md`](docs/models.md#vision--image-input)
+- `slack-bolt`/`aiohttp` install by default via `requirements.txt` but are
+  only used by the optional Slack bot (`slack_bot.py`) — see
+  [`docs/slack.md`](docs/slack.md)
 
 ## Setup
 
@@ -120,6 +123,25 @@ You> /exit
 Bye!
 ```
 
+## Slack Bot
+
+`slack_bot.py` runs a second, independent entry point: a long-running
+Socket Mode bot that lets people trigger the same AI agent from Slack
+messages instead of a terminal, replying in-thread.
+
+```bash
+python3 slack_bot.py
+```
+
+Purely `config.json`-driven (`slack.bot_token`/`slack.app_token`/
+`slack.allowed_dir`/`slack.allowed_users` — copy `config.json.example` to
+get started), no CLI flags. Each Slack thread is its own independent
+conversation; tool calls auto-approve inside `allowed_dir` and are
+auto-refused outside it (no interactive approval over Slack). See
+[`docs/slack.md`](docs/slack.md) for setup (creating the Slack app,
+enabling Socket Mode, required scopes) and the security considerations
+around who can trigger it.
+
 ## Tools
 
 The AI has access to tools for searching/inspecting files and for editing
@@ -160,9 +182,12 @@ the event schema and lifecycle.
 | `tests/test_sessions.py` | Automated tests for session-history persistence (`core/sessions.py`) — no Ollama/network needed |
 | `tests/test_eventlog.py` | Automated tests for the JSONL event log (`core/eventlog.py`) — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
-| `config.json.example` | Template for the optional git-ignored `config.json` (local `model`/`base_url`/`api_key` overrides) — see [`docs/models.md`](docs/models.md) |
+| `config.json.example` | Template for the optional git-ignored `config.json` (local `model`/`base_url`/`api_key` overrides, plus the optional `slack` block) — see [`docs/models.md`](docs/models.md) and [`docs/slack.md`](docs/slack.md) |
+| `slack_bot.py` | Slack bot entry point (Socket Mode) — see [`docs/slack.md`](docs/slack.md) |
+| `slack_bot/` | Slack integration layer — Bolt event wiring, per-thread sessions, live-region adapter |
+| `tests/test_slack_bot.py` | Automated tests for Slack access control, throttled live-updates, and thread-session locking — no live Slack/network needed |
 | `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
-| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), and [`docs/logging.md`](docs/logging.md) |
+| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), [`docs/logging.md`](docs/logging.md), and [`docs/slack.md`](docs/slack.md) |
 
 ## Exit
 
