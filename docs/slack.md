@@ -10,27 +10,61 @@ messages instead of a terminal. See "Architecture" in the project
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New
    App** → **From scratch**. Pick a name and workspace.
-2. **Socket Mode** (left sidebar) → toggle it on. This generates an
-   **App-Level Token** (`xapp-...`) — when prompted for a scope, add
-   `connections:write` (the only scope Socket Mode itself needs). Save
-   this token for `config.json`'s `slack.app_token`.
-3. **OAuth & Permissions** (left sidebar) → under **Bot Token Scopes**,
-   add:
-   - `app_mentions:read` — see `@mention` events.
-   - `chat:write` — post and edit replies.
-   - `channels:history` (and `groups:history` if you'll use it in a
-     private channel) — see thread replies after the initial mention;
-     without this, the `message` event subscription below won't
-     actually deliver follow-up replies in a thread.
-   - `files:read` — download files people attach to a message (see "File
-     attachments" below).
-4. **Event Subscriptions** (left sidebar) → toggle on → under
-   **Subscribe to bot events**, add `app_mention` and `message.channels`
-   (+ `message.groups` for private channels).
+2. **Socket Mode** (left sidebar) → toggle it on. This generates the
+   **App-Level Token** (`xapp-...`) — save it for `config.json`'s
+   `slack.app_token`. See "Required permissions" below for the scope it
+   needs.
+3. **OAuth & Permissions** (left sidebar) → add every scope listed under
+   "Required permissions" below, in the **Bot Token Scopes** section.
+4. **Event Subscriptions** (left sidebar) → toggle on → add every event
+   listed under "Required permissions" below, in **Subscribe to bot
+   events**.
 5. **Install App** (top of OAuth & Permissions, or the sidebar's Install
    App page) → install to your workspace. This mints the **Bot User
    Token** (`xoxb-...`) — save it for `config.json`'s `slack.bot_token`.
 6. Invite the bot to your test channel: `/invite @YourBotName`.
+
+## Required permissions
+
+Everything the bot needs, in one place — cross-reference this whenever
+something isn't working, since a missing scope/event usually fails
+**silently** (the event or API call never happens; no error appears
+anywhere in `slack_bot.py`'s own output).
+
+**App-Level Token scope** (Socket Mode page — this token, not the Bot
+Token, is what Socket Mode itself authenticates with):
+
+| Scope | Why |
+|---|---|
+| `connections:write` | Required for the Socket Mode WebSocket connection itself. |
+
+**Bot Token Scopes** (OAuth & Permissions page):
+
+| Scope | Why |
+|---|---|
+| `app_mentions:read` | Receive `@mention` events. |
+| `chat:write` | Post and edit the bot's replies. |
+| `channels:history` | Read messages/replies in **public** channels the bot is in — without it, thread replies never reach the bot even if the `message.channels` event below is subscribed. |
+| `groups:history` | Same, for **private** channels — only needed if you'll use the bot there. |
+| `files:read` | Download files people attach to a message (see "File attachments" below). |
+
+**Event Subscriptions** (Event Subscriptions page → **Subscribe to bot
+events**):
+
+| Event | Why |
+|---|---|
+| `app_mention` | Deliver `@mention` events — starts/continues a thread. |
+| `message.channels` | Deliver messages (including thread replies) in **public** channels — required for "reply in the same thread" to work at all. |
+| `message.groups` | Same, for **private** channels — only needed if you'll use the bot there. |
+
+**⚠️ After changing any scope or event subscription, you must
+reinstall the app to the workspace** (Install App page → reinstall).
+Slack does not apply the change to a running installation otherwise —
+the bot token keeps behaving exactly as before until you do this. This
+is the single most common cause of "I added the permission and it still
+doesn't work": the scope/event exists in the app's *configuration* but
+the *installed* app in your workspace hasn't been updated to match yet.
+Restart `python3 slack_bot.py` afterward too, for a clean reconnect.
 
 ## `config.json` schema
 
