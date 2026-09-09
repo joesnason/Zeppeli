@@ -22,6 +22,7 @@ import re
 from rich.console import Console
 
 from .access import is_allowed
+from .attachments import MAX_ATTACHMENTS_PER_MESSAGE, AttachmentError, attachments_dir, process_attachment
 from .live import SlackLive
 from .runner import run_and_persist
 
@@ -39,15 +40,42 @@ def _strip_bot_mention(text: str, bot_user_id: str) -> str:
 
 def register_handlers(app, *, llm_with_tools, initial_cwd: str, allowed_users,
                        registry, bot_user_id: str, model_name, mode: str,
+                       bot_token: str, http_session,
                        context_window: int | None = None):
     """Registers the two handlers on `app` and also returns them directly
     (as `(handle_app_mention, handle_message)`) so tests can invoke them
     without a real Bolt app/event dispatch loop."""
 
+    async def _process_attachments(client, channel: str, thread_ts: str, files: list[dict]) -> str:
+        """Downloads/saves each supported attachment (see
+        slack_bot/attachments.py), returning the notes to fold into the
+        turn's text. An unsupported/oversized/failed file posts its own
+        one-line explanation directly to the thread instead — one bad
+        attachment never blocks the rest of the message or the other
+        attachments."""
+        notes = []
+        dest_dir = attachments_dir(initial_cwd)
+        for file_info in files[:MAX_ATTACHMENTS_PER_MESSAGE]:
+            try:
+                notes.append(await process_attachment(
+                    file_info, bot_token=bot_token, session=http_session, dest_dir=dest_dir,
+                ))
+            except AttachmentError as e:
+                await client.chat_postMessage(
+                    channel=channel, thread_ts=thread_ts,
+                    text=f':warning: Couldn\'t use attachment "{file_info.get("name", "?")}": {e}',
+                )
+        return "\n\n".join(notes)
+
     async def _dispatch(event, client, *, thread_ts: str, text: str) -> None:
         user = event.get("user")
         if user is None or user == bot_user_id or not is_allowed(user, allowed_users):
             return
+        files = event.get("files") or []
+        if files:
+            attachment_notes = await _process_attachments(client, event["channel"], thread_ts, files)
+            if attachment_notes:
+                text = f"{text}\n\n{attachment_notes}" if text else attachment_notes
         thread_session = await registry.get_or_create(thread_ts, initial_cwd, model_name)
         async with thread_session.lock:
             live = SlackLive(client, event["channel"], thread_ts)

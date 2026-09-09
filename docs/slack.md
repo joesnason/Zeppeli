@@ -22,6 +22,8 @@ messages instead of a terminal. See "Architecture" in the project
      private channel) — see thread replies after the initial mention;
      without this, the `message` event subscription below won't
      actually deliver follow-up replies in a thread.
+   - `files:read` — download files people attach to a message (see "File
+     attachments" below).
 4. **Event Subscriptions** (left sidebar) → toggle on → under
    **Subscribe to bot events**, add `app_mention` and `message.channels`
    (+ `message.groups` for private channels).
@@ -91,6 +93,32 @@ still land in `~/.zeppeli/sessions/`/`~/.zeppeli/logs/` exactly like the
 terminal REPL, though — only the live in-memory conversation is lost,
 not the historical record.
 
+## File attachments
+
+Attaching a file to a message (e.g. a log file) lets the bot analyze it
+alongside your prompt. A file is supported if Slack reports it as a
+`text/*` mimetype, **or** its filename has a well-known text extension
+(`.log`, `.txt`, `.csv`, `.json`, `.md`, `.yml`/`.yaml`, `.ini`/`.conf`/
+`.cfg`, `.env`, `.xml`) — the extension check exists because Slack often
+reports a `.log` file's mimetype as the generic `application/octet-stream`
+rather than `text/plain` in practice, which a mimetype-only check would
+wrongly reject. Images, archives, and other binaries are refused with a
+one-line note in the thread, not silently dropped.
+
+Rather than dumping the whole file into the prompt, the bot **saves it**
+to `<allowed_dir>/.slack_attachments/` (named `<slack-file-id>_<filename>`
+to avoid collisions) and gives the model the file's path, its total line
+count, and a preview of its **last ~200 lines** — a log's most recent
+lines are usually the relevant ones. If the model needs earlier content,
+it uses its own existing `read_file`/`rg_search` tools on that saved
+path to page through the rest — no special "attachment" tool exists;
+this is exactly the same file-reading path any other file on disk goes
+through.
+
+A message can carry up to 3 attachments; anything beyond that is
+ignored. A file over 50 MB, or one that fails to download, gets the same
+one-line refusal in the thread as an unsupported type.
+
 ## Permission model — auto-mode only, no interactive approval
 
 The bot always runs in the equivalent of `--auto-mode`, scoped to
@@ -130,7 +158,12 @@ including the resolved bot user ID and `allowed_dir`.
   long-running process will accumulate one `ThreadSession` per thread
   ever used, for as long as the process stays up. A periodic restart
   (or a future TTL sweep) is the mitigation for now.
-- **No image/attachment support** — Slack file uploads aren't wired
-  into `core/images.py`'s `@path`/`--image` pipeline.
+- **No image support** — only `text/*` attachments are handled (see
+  "File attachments" above); Slack image uploads aren't wired into
+  `core/images.py`'s `@path`/`--image` vision pipeline.
+- **`.slack_attachments/` never gets cleaned up** — every downloaded
+  attachment accumulates on disk indefinitely, same "no eviction in v1"
+  spirit as the thread registry above. Periodically clear it out by hand
+  if disk usage becomes a concern.
 - **No interactive approval** — by design (see "Permission model"
   above), not a bug.

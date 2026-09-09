@@ -15,6 +15,7 @@ doesn't protect against.
 import asyncio
 import sys
 
+import aiohttp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.app.async_app import AsyncApp
 
@@ -54,21 +55,24 @@ async def _run() -> None:
     bot_user_id = auth["user_id"]
 
     registry = ThreadRegistry()
-    register_handlers(
-        app,
-        llm_with_tools=llm_with_tools,
-        initial_cwd=slack_cfg["allowed_dir"],
-        allowed_users=slack_cfg.get("allowed_users"),
-        registry=registry,
-        bot_user_id=bot_user_id,
-        model_name=model,
-        mode=MODE_AUTO,
-        context_window=context_window,
-    )
+    async with aiohttp.ClientSession() as http_session:
+        register_handlers(
+            app,
+            llm_with_tools=llm_with_tools,
+            initial_cwd=slack_cfg["allowed_dir"],
+            allowed_users=slack_cfg.get("allowed_users"),
+            registry=registry,
+            bot_user_id=bot_user_id,
+            model_name=model,
+            mode=MODE_AUTO,
+            bot_token=slack_cfg["bot_token"],
+            http_session=http_session,
+            context_window=context_window,
+        )
 
-    print(f"Zeppeli Slack bot connected (bot user: {bot_user_id}, allowed_dir: {slack_cfg['allowed_dir']})")
-    handler = AsyncSocketModeHandler(app, slack_cfg["app_token"])
-    await handler.start_async()
+        print(f"Zeppeli Slack bot connected (bot user: {bot_user_id}, allowed_dir: {slack_cfg['allowed_dir']})")
+        handler = AsyncSocketModeHandler(app, slack_cfg["app_token"])
+        await handler.start_async()
 
 
 if __name__ == "__main__":

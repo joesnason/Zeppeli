@@ -8,8 +8,10 @@ objects. Style matches test_streaming.py/test_permission_modes.py.
 
 import asyncio
 
+import slack_bot.attachments as attachments_module
 import slack_bot.live as live_module
 from slack_bot.access import is_allowed
+from slack_bot.attachments import AttachmentError, _is_supported, _sanitize_filename, process_attachment
 from slack_bot.handlers import _strip_bot_mention, register_handlers
 from slack_bot.live import SlackLive
 from slack_bot.sessions import ThreadSession, ThreadRegistry
@@ -35,6 +37,36 @@ class _FakeSlackClient:
 
     async def chat_update(self, channel, ts, text):
         self.calls.append(("update", channel, None, ts, text))
+
+
+class _FakeHTTPResponse:
+    def __init__(self, status: int, body: bytes):
+        self.status = status
+        self._body = body
+
+    async def read(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeHTTPSession:
+    """Mirrors just enough of aiohttp.ClientSession's shape for
+    process_attachment(): `.get(url, headers=...)` returns an async
+    context manager (not a coroutine — matches real aiohttp usage)."""
+
+    def __init__(self, status: int = 200, body: bytes = b""):
+        self.status = status
+        self.body = body
+        self.calls = []  # list of (url, headers)
+
+    def get(self, url, headers=None):
+        self.calls.append((url, headers))
+        return _FakeHTTPResponse(self.status, self.body)
 
 
 # --- slack_bot/access.py ----------------------------------------------------
@@ -225,7 +257,8 @@ class _FakeRegistry:
         return ThreadSession(messages=[], session_id="s", history_session=None)
 
 
-def _register(monkeypatch, registry, allowed_users=None):
+def _register(monkeypatch, registry, allowed_users=None, initial_cwd="/tmp",
+              bot_token="xoxb-test", http_session=None):
     import slack_bot.handlers as handlers_module
     calls = []
 
@@ -235,8 +268,9 @@ def _register(monkeypatch, registry, allowed_users=None):
     monkeypatch.setattr(handlers_module, "run_and_persist", fake_run_and_persist)
     app = _FakeApp()
     handle_mention, handle_message = register_handlers(
-        app, llm_with_tools=None, initial_cwd="/tmp", allowed_users=allowed_users,
+        app, llm_with_tools=None, initial_cwd=initial_cwd, allowed_users=allowed_users,
         registry=registry, bot_user_id="UBOT1", model_name="m", mode="auto",
+        bot_token=bot_token, http_session=http_session,
     )
     return handle_mention, handle_message, calls
 
@@ -296,3 +330,165 @@ def test_message_reply_in_known_thread_from_allowed_user_dispatches(monkeypatch)
     _run(handle_message(event, client=object()))
     assert len(calls) == 1
     assert calls[0][0][2] == "follow up"
+
+
+# --- slack_bot/attachments.py -----------------------------------------------
+
+def test_is_supported_checks_text_mimetype_prefix():
+    assert _is_supported({"mimetype": "text/plain"}) is True
+    assert _is_supported({"mimetype": "text/csv"}) is True
+    assert _is_supported({"mimetype": "image/png"}) is False
+    assert _is_supported({}) is False
+
+
+def test_is_supported_falls_back_to_known_text_extension():
+    # Regression: Slack reports a .log file's mimetype as the generic
+    # application/octet-stream rather than text/plain in practice, which
+    # a mimetype-only check would wrongly reject.
+    assert _is_supported({"mimetype": "application/octet-stream", "name": "build.log"}) is True
+    assert _is_supported({"mimetype": "application/octet-stream", "name": "notes.txt"}) is True
+    assert _is_supported({"mimetype": "application/octet-stream", "name": "app.exe"}) is False
+    assert _is_supported({"mimetype": "application/octet-stream"}) is False  # no name to fall back on
+
+
+def test_sanitize_filename_strips_path_traversal_and_unsafe_chars():
+    assert _sanitize_filename("../../etc/passwd") == "passwd"
+    assert _sanitize_filename("weird?<>name.txt") == "weird___name.txt"
+    assert _sanitize_filename("") == "attachment"
+
+
+def test_process_attachment_happy_path_saves_file_and_builds_note(tmp_path):
+    session = _FakeHTTPSession(status=200, body=b"line1\nline2\nline3\n")
+    file_info = {
+        "id": "F123", "name": "error.log", "mimetype": "text/plain",
+        "size": 18, "url_private_download": "https://files.slack.com/f123",
+    }
+
+    async def body():
+        note = await process_attachment(
+            file_info, bot_token="xoxb-test", session=session, dest_dir=tmp_path,
+        )
+        assert "3 lines total" in note
+        assert "line3" in note
+        saved = tmp_path / "F123_error.log"
+        assert saved.exists()
+        assert saved.read_text() == "line1\nline2\nline3\n"
+        assert session.calls == [("https://files.slack.com/f123", {"Authorization": "Bearer xoxb-test"})]
+
+    _run(body())
+
+
+def test_process_attachment_rejects_unsupported_mimetype_without_network_call(tmp_path):
+    session = _FakeHTTPSession(status=200, body=b"whatever")
+    file_info = {"id": "F1", "name": "photo.png", "mimetype": "image/png"}
+
+    async def body():
+        try:
+            await process_attachment(file_info, bot_token="t", session=session, dest_dir=tmp_path)
+            assert False, "expected AttachmentError"
+        except AttachmentError as e:
+            assert "unsupported" in str(e)
+        assert session.calls == []  # never even attempted a download
+
+    _run(body())
+
+
+def test_process_attachment_rejects_oversized_declared_size_without_network_call(tmp_path):
+    session = _FakeHTTPSession(status=200, body=b"whatever")
+    file_info = {
+        "id": "F1", "name": "big.log", "mimetype": "text/plain",
+        "size": attachments_module.MAX_DOWNLOAD_BYTES + 1,
+        "url_private_download": "https://files.slack.com/big",
+    }
+
+    async def body():
+        try:
+            await process_attachment(file_info, bot_token="t", session=session, dest_dir=tmp_path)
+            assert False, "expected AttachmentError"
+        except AttachmentError as e:
+            assert "too large" in str(e)
+        assert session.calls == []
+
+    _run(body())
+
+
+def test_process_attachment_rejects_oversized_after_download_and_leaves_no_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(attachments_module, "MAX_DOWNLOAD_BYTES", 10)
+    session = _FakeHTTPSession(status=200, body=b"this body is more than 10 bytes long")
+    file_info = {
+        "id": "F1", "name": "big.log", "mimetype": "text/plain",
+        "url_private_download": "https://files.slack.com/big",  # no declared "size" -> only post-download check applies
+    }
+
+    async def body():
+        try:
+            await process_attachment(file_info, bot_token="t", session=session, dest_dir=tmp_path)
+            assert False, "expected AttachmentError"
+        except AttachmentError as e:
+            assert "too large" in str(e)
+        assert list(tmp_path.iterdir()) == []  # no partial file left behind
+
+    _run(body())
+
+
+def test_process_attachment_raises_on_non_200_status(tmp_path):
+    session = _FakeHTTPSession(status=404, body=b"")
+    file_info = {
+        "id": "F1", "name": "gone.log", "mimetype": "text/plain",
+        "url_private_download": "https://files.slack.com/gone",
+    }
+
+    async def body():
+        try:
+            await process_attachment(file_info, bot_token="t", session=session, dest_dir=tmp_path)
+            assert False, "expected AttachmentError"
+        except AttachmentError as e:
+            assert "404" in str(e)
+
+    _run(body())
+
+
+# --- slack_bot/handlers.py: attachment integration --------------------------
+
+def test_message_with_supported_attachment_folds_note_into_user_input(monkeypatch, tmp_path):
+    import slack_bot.handlers as handlers_module
+
+    async def fake_process_attachment(file_info, *, bot_token, session, dest_dir):
+        return f"NOTE:{file_info['name']}"
+
+    monkeypatch.setattr(handlers_module, "process_attachment", fake_process_attachment)
+    registry = _FakeRegistry(known={"111.1"})
+    _, handle_message, calls = _register(
+        monkeypatch, registry, allowed_users=["UME1"], initial_cwd=str(tmp_path),
+    )
+    event = {
+        "user": "UME1", "text": "check this out", "thread_ts": "111.1", "channel": "C1",
+        "files": [{"id": "F1", "name": "error.log", "mimetype": "text/plain"}],
+    }
+    _run(handle_message(event, client=object()))
+    assert len(calls) == 1
+    assert calls[0][0][2] == "check this out\n\nNOTE:error.log"
+
+
+def test_message_with_unsupported_attachment_posts_warning_and_still_dispatches(monkeypatch, tmp_path):
+    import slack_bot.handlers as handlers_module
+
+    async def fake_process_attachment(file_info, *, bot_token, session, dest_dir):
+        raise AttachmentError("unsupported file type")
+
+    monkeypatch.setattr(handlers_module, "process_attachment", fake_process_attachment)
+    registry = _FakeRegistry(known={"111.1"})
+    _, handle_message, calls = _register(
+        monkeypatch, registry, allowed_users=["UME1"], initial_cwd=str(tmp_path),
+    )
+    client = _FakeSlackClient()
+    event = {
+        "user": "UME1", "text": "look at this", "thread_ts": "111.1", "channel": "C1",
+        "files": [{"id": "F1", "name": "photo.png", "mimetype": "image/png"}],
+    }
+    _run(handle_message(event, client=client))
+    assert len(calls) == 1
+    assert calls[0][0][2] == "look at this"  # unchanged — no note to append
+    assert len(client.calls) == 1
+    assert client.calls[0][0] == "post"
+    assert "photo.png" in client.calls[0][4]
