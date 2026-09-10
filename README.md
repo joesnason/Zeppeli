@@ -176,6 +176,7 @@ the event schema and lifecycle.
 | `tests/test_model_config.py` | Automated tests for model/cloud config resolution — no Ollama/network needed |
 | `tests/test_streaming.py` | Automated tests for chunk-content normalization and model-error handling in streaming — no Ollama/network needed |
 | `tests/test_tools.py` | Automated tests for `rg_search`'s output cap — no Ollama/network needed |
+| `tests/test_read_file.py` | Automated tests for `read_file()`'s pagination and truncation behavior — no Ollama/network needed |
 | `tests/test_truncation.py` | Automated tests for the generic tool-output line/char cap and its full-record preservation — no Ollama/network needed |
 | `tests/test_compaction.py` | Automated tests for the two-tier conversation-history compaction sent to the model — no Ollama/network needed |
 | `tests/test_images.py` | Automated tests for image attachment (`@path`/`/image`/`--image`) — no Ollama/network needed |

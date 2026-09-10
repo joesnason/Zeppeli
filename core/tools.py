@@ -67,7 +67,10 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
               max_lines: int = 10000, max_bytes: int = 98304) -> str:
     """Read a file in chunks of up to 400 lines starting at line `offset` (0-indexed).
     Stops early when either max_lines lines or max_bytes bytes have been read.
-    The returned footer tells you whether more content is available and the next offset to use."""
+    The returned footer tells you whether more content is available and the next offset to use.
+    A single line longer than max_bytes is truncated and still counted as
+    read (rather than returning nothing) so a later call always advances
+    past it instead of repeating the same stop forever."""
     limit = min(limit, 400)
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -88,6 +91,19 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
                     break
                 line_bytes = len(line.encode())
                 if total_bytes + line_bytes > max_bytes:
+                    # Include a truncated slice of this line (if any budget
+                    # remains) rather than nothing, and count it as consumed
+                    # — otherwise a line alone bigger than max_bytes would
+                    # leave `lines` empty, `end_line` would equal `offset`
+                    # unchanged, and every future call at this same offset
+                    # would repeat this exact failure forever.
+                    remaining = max_bytes - total_bytes
+                    if remaining > 0:
+                        encoded = line.encode()
+                        kept = encoded[:remaining].decode(errors="replace")
+                        omitted = len(encoded) - len(kept.encode())
+                        lines.append(f"{kept}\n[line truncated, {omitted} more bytes]\n")
+                        total_bytes += len(kept.encode())
                     truncated_by = "max_bytes"
                     break
                 lines.append(line)

@@ -331,6 +331,16 @@ paginate:
   lines but no limit was hit (i.e. `limit` was reached first).
 - `[End of file]` when there's nothing left to read.
 
+A single line longer than `max_bytes` on its own (e.g. one giant
+classpath/command line in a build log) is **truncated and still
+included** — with a `[line truncated, N more bytes]` marker — rather
+than returned as empty content. It's also still counted as one consumed
+line, so the next `offset` always advances past it. Without this, a
+line bigger than `max_bytes` left `lines` empty and `end_line` equal to
+the call's own `offset`, so every follow-up call at that same offset
+repeated the identical `max_bytes` stop forever with no way to read
+past it (fixed after a real build-log analysis hit exactly this).
+
 Errors: `FileNotFoundError` and an `offset` past end-of-file both return a
 `[read_file] Error: ...` string rather than raising, since tool results must
 be strings the model can read.
