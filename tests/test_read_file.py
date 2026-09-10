@@ -50,9 +50,23 @@ def test_read_file_max_lines_truncation():
         f = Path(d) / "many_lines.txt"
         f.write_text("".join(f"{i}\n" for i in range(20)))
         result = read_file.invoke({"path": str(f), "max_lines": 3, "limit": 20})
-        assert "[Stopped: max_lines limit reached at line 3]" in result
+        assert "[Stopped: max_lines limit reached — use offset=3 to continue]" in result
         assert "2\n" in result  # 0,1,2 kept
         assert "3\n" not in result
+
+
+def test_read_file_stopped_footer_is_as_explicit_as_more_available_footer():
+    # Regression: a hard-limit stop used to omit the "use offset=N to
+    # continue" hint the "more available" footer always had, making it
+    # less actionable — a model asked to keep reading past a max_bytes/
+    # max_lines stop has no less explicit an instruction than it would
+    # after a plain "more available" stop.
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "many_lines.txt"
+        f.write_text("".join(f"{i}\n" for i in range(20)))
+        result = read_file.invoke({"path": str(f), "max_lines": 5, "limit": 20})
+        end_line = _header_end_line(result)
+        assert f"use offset={end_line} to continue" in result
 
 
 def test_read_file_oversized_single_line_included_truncated_and_advances():
@@ -87,7 +101,7 @@ def test_read_file_deferred_line_when_budget_exhausted_by_prior_lines():
         assert "B" not in result
         end_line = _header_end_line(result)
         assert end_line == 1
-        assert "[Stopped: max_bytes limit reached at line 1]" in result
+        assert "[Stopped: max_bytes limit reached — use offset=1 to continue]" in result
 
         # Read fresh at the new offset — line 2 is itself oversized, so
         # it's now handled via the same truncate-and-advance path.

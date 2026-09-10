@@ -163,7 +163,11 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
         end_line = offset + len(lines)
         header = f"[File: {path} | lines {offset + 1}–{end_line} | {total_bytes} bytes]"
         if truncated_by:
-            footer = f"[Stopped: {truncated_by} limit reached at line {end_line}]"
+            # As explicit as the "more available" footer below — a stop
+            # due to a hard limit still has more to read (the file isn't
+            # actually finished), so the next offset must be spelled out
+            # just as plainly, or a model may not reliably continue.
+            footer = f"[Stopped: {truncated_by} limit reached — use offset={end_line} to continue]"
         elif has_more:
             footer = f"[More available: use offset={end_line} to continue]"
         else:

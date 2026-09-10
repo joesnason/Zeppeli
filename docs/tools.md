@@ -343,8 +343,13 @@ Return format is a header, the raw lines, and a footer:
 The footer is one of three variants, communicating to the model how to
 paginate:
 
-- `[Stopped: max_lines limit reached at line <n>]` / `[Stopped: max_bytes limit reached at line <n>]`
-  when a hard limit truncated the read.
+- `[Stopped: max_lines limit reached — use offset=<n> to continue]` /
+  `[Stopped: max_bytes limit reached — use offset=<n> to continue]`
+  when a hard limit truncated the read — as explicit about the next
+  offset as the "more available" footer below (a hard-limit stop still
+  has more to read; a model shouldn't need to infer that from "at line
+  <n>" alone — this was previously less explicit, and contributed to a
+  small local model failing to reliably continue reading past one).
 - `[More available: use offset=<n> to continue]` when the file has more
   lines but no limit was hit (i.e. `limit` was reached first).
 - `[End of file]` when there's nothing left to read.
