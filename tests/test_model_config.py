@@ -249,6 +249,29 @@ def test_load_slack_config_coexists_with_flat_model_config_no_unknown_key_warnin
     assert "unrecognized key" not in err  # "slack" must not be flagged as unrecognized
 
 
+def test_load_slack_config_correct_prefixes_warn_nothing(capsys):
+    cli._CONFIG_PATH.write_text(json.dumps({
+        "slack": {"app_token": "xapp-1", "bot_token": "xoxb-1"},
+    }))
+    cli._load_slack_config()
+    assert capsys.readouterr().err == ""
+
+
+def test_load_slack_config_swapped_tokens_warn_but_still_load(capsys):
+    # Regression: app_token/bot_token swapped by hand (easy mistake —
+    # both are opaque-looking strings) used to load silently and only
+    # surface later as a confusing Slack API error.
+    cli._CONFIG_PATH.write_text(json.dumps({
+        "slack": {"app_token": "xoxb-1", "bot_token": "xapp-1"},
+    }))
+    data = cli._load_slack_config()
+    # Still loads as-is — this is a heuristic warning, not enforcement.
+    assert data == {"app_token": "xoxb-1", "bot_token": "xapp-1"}
+    err = capsys.readouterr().err
+    assert "app_token" in err and "xapp-" in err and "swap" in err
+    assert "bot_token" in err and "xoxb-" in err
+
+
 # --- core/agent.py: load_llm() branching -----------------------------------
 
 def test_load_llm_ollama_branch_default_unchanged(monkeypatch):

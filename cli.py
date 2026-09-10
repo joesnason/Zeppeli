@@ -94,7 +94,7 @@ def _parse_args(argv: list[str] | None = None):
 # touching a real repo-root file.
 _CONFIG_PATH = pathlib.Path(__file__).parent / "config.json"
 _CONFIG_KEYS = ("model", "base_url", "api_key", "slack")
-_SLACK_CONFIG_KEYS = ("bot_token", "app_token", "allowed_dir", "allowed_users")
+_SLACK_CONFIG_KEYS = ("app_token", "bot_token", "allowed_dir", "allowed_users")
 
 
 def _read_json_config() -> dict | None:
@@ -168,20 +168,25 @@ def _load_config_file() -> dict:
 
 
 def _load_slack_config() -> dict:
-    """Load the optional "slack" object from config.json (bot_token,
-    app_token, allowed_dir, allowed_users) — see config.json.example and
+    """Load the optional "slack" object from config.json (app_token,
+    bot_token, allowed_dir, allowed_users) — see config.json.example and
     docs/slack.md. Never raises; stays as best-effort as _load_config_file():
       - missing "slack" key, or the whole file missing/malformed -> {}.
       - "slack" present but not a JSON object -> {} plus a warning.
       - unrecognized nested keys -> ignored, plus a warning naming them.
-      - bot_token/app_token/allowed_dir must be non-empty strings, or
+      - app_token/bot_token/allowed_dir must be non-empty strings, or
         they're treated as absent; allowed_users must be a list of
         strings, or it's dropped (an empty/omitted allowed_users means
         "anyone is allowed" — see slack_bot/access.py).
+      - a present app_token/bot_token not matching Slack's expected
+        prefix ("xapp-"/"xoxb-" respectively) still loads, but warns —
+        the two are easy to swap by hand (see the comment at the check
+        itself for why), and a swap otherwise only surfaces later as a
+        much more confusing Slack API error.
     Unlike _load_config_file(), a missing/invalid result here isn't a
     silently-tolerable fallback tier — slack_bot.py has no flag/env-var
     escape hatch for these values, so it's the caller's job to treat a
-    missing bot_token/app_token/allowed_dir as fatal, not this function's.
+    missing app_token/bot_token/allowed_dir as fatal, not this function's.
     """
     data = _read_json_config()
     if data is None:
@@ -206,13 +211,37 @@ def _load_slack_config() -> dict:
         )
 
     result = {}
-    for key in ("bot_token", "app_token", "allowed_dir"):
+    for key in ("app_token", "bot_token", "allowed_dir"):
         value = slack.get(key)
         if isinstance(value, str) and value:
             result[key] = value
     users = slack.get("allowed_users")
     if isinstance(users, list) and all(isinstance(u, str) for u in users):
         result["allowed_users"] = users
+
+    # Heuristic sanity check, not enforcement: app_token/bot_token are
+    # easy to swap by hand (both are opaque-looking strings, and the
+    # confusion is compounded by Socket Mode's app-level token being
+    # generated *before* the bot token during setup — see docs/slack.md).
+    # A swap doesn't fail here; it fails later as a much more confusing
+    # Slack API error ("not_allowed_token_type" on apps.connections.open,
+    # or a None bot user id from auth.test()) — this warns immediately
+    # instead, without blocking startup in case Slack ever changes its
+    # token-prefix convention.
+    if "app_token" in result and not result["app_token"].startswith("xapp-"):
+        print(
+            f'warning: {_CONFIG_PATH}\'s "slack.app_token" doesn\'t look like an '
+            f'App-Level Token (expected to start with "xapp-") — did you swap '
+            f'app_token and bot_token?',
+            file=sys.stderr,
+        )
+    if "bot_token" in result and not result["bot_token"].startswith("xoxb-"):
+        print(
+            f'warning: {_CONFIG_PATH}\'s "slack.bot_token" doesn\'t look like a '
+            f'Bot User Token (expected to start with "xoxb-") — did you swap '
+            f'app_token and bot_token?',
+            file=sys.stderr,
+        )
     return result
 
 

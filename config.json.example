@@ -3,8 +3,8 @@
   "base_url": "",
   "api_key": "",
   "slack": {
-    "bot_token": "",
     "app_token": "",
+    "bot_token": "",
     "allowed_dir": "",
     "allowed_users": []
   }

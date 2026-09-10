@@ -75,16 +75,25 @@ the `"slack"` block:
 {
   "model": "gemma4:e2b", "base_url": "", "api_key": "",
   "slack": {
-    "bot_token": "xoxb-...",
     "app_token": "xapp-...",
+    "bot_token": "xoxb-...",
     "allowed_dir": "/path/to/a/disposable/sandbox/directory",
     "allowed_users": ["U0123ABCXYZ"]
   }
 }
 ```
 
-- `bot_token`/`app_token` — from steps 5/2 above. Both required;
+- `app_token`/`bot_token` — from steps 2/5 above, in that order — Slack
+  hands you the App-Level Token *before* the Bot Token during setup
+  (Socket Mode toggle, then Install App), so this field order matches
+  the order you'll actually obtain them in. Both required;
   `slack_bot.py` exits with a clear message if either is missing.
+  **Easy to mix up by hand** — both are opaque-looking strings — so
+  `cli.py` warns at startup (not fatal) if `app_token` doesn't start
+  with `xapp-` or `bot_token` doesn't start with `xoxb-`, since a swap
+  otherwise only surfaces later as a confusing Slack API error
+  (`not_allowed_token_type` on `apps.connections.open`, or a `None` bot
+  user id from `auth.test()` — hit for real once already).
 - `allowed_dir` — the auto-mode containment boundary (see "Permission
   model" below). Required.
 - `allowed_users` — optional. See "Access control" below.
