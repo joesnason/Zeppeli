@@ -263,11 +263,23 @@ a bundled binary).
 
 ### `rg_search(pattern, path=".", glob="", max_bytes=50000)`
 
-Searches file contents with ripgrep, using the binary bundled at `bin/rg`
-(`RG_BIN`, defined in `core/tools.py` as
-`Path(__file__).parent.parent / "bin" / "rg"` — one `.parent` to get out of
-`core/` plus one to reach the repo root — so it resolves correctly regardless
-of launch cwd):
+Searches file contents with ripgrep. Which `rg` binary to invoke
+(`RG_BIN`) is resolved once at import time by `core/tools.py`'s
+`_find_rg_bin()`:
+
+1. A system-installed `rg` on `PATH` (`shutil.which("rg")`), if present
+   — takes priority regardless of platform, so a newer/system version
+   is always preferred over a bundled one.
+2. Otherwise, a bundled binary matching the current
+   `(platform.system(), platform.machine())` — `bin/rg-darwin-arm64`
+   (macOS Apple Silicon) or `bin/rg-linux-x86_64` (Linux x86-64), both
+   ripgrep v15.1.0 so behavior/output format is identical across
+   platforms. Zero setup needed on either of these two platform/arch
+   combinations.
+3. Otherwise `RG_BIN` is `None` — `rg_search()` returns a friendly
+   `"Error: ripgrep ('rg') isn't available for this platform. Install
+   it — ..."` message (with the right install command per OS) instead
+   of attempting to run anything.
 
 ```python
 cmd = [RG_BIN, "--no-heading", "--color=never", pattern, path]
@@ -280,8 +292,14 @@ if glob:
 if ripgrep exits with code 2 (its convention for a genuine error, as opposed
 to code 1 for "no matches").
 
-The bundled binary is built for `aarch64-apple-darwin` — it will not run on
-other platforms/architectures without swapping the binary at `bin/rg`.
+`subprocess.run(cmd, ...)` itself is wrapped in `try/except OSError` — a
+binary that exists but can't actually be launched (wrong-platform
+executable format, corrupted file, permissions) raises there rather
+than producing a `returncode`, and previously propagated uncaught all
+the way up and crashed the whole process (found for real: a Linux
+machine running the old single macOS-only `bin/rg` hit `OSError:
+[Errno 8] Exec format error`). Now it's caught and returned as a normal
+`"Error: couldn't run ripgrep at <path>: ..."` tool-result string.
 
 Output is capped at `max_bytes` (default 50 000, measured as UTF-8-encoded
 byte length): a broad pattern against a large file (e.g. a build log with

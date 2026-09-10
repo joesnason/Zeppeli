@@ -17,6 +17,11 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 - The model pulled: `ollama pull gemma4:26b-nvfp4`
 - Python 3.12+
 - Node.js 22+ (for `glob_files` tool)
+- ripgrep (for `rg_search` tool) — bundled, zero-setup, for macOS
+  Apple Silicon and Linux x86-64 (`bin/rg-darwin-arm64`/
+  `bin/rg-linux-x86_64`); any other platform/architecture needs `rg`
+  installed and on `PATH` (e.g. `brew install ripgrep` / `apt install
+  ripgrep`) — see [`docs/tools.md`](docs/tools.md#rg_searchpattern-path-glob-max_bytes50000)
 - `langchain-litellm`/`litellm` install by default via `requirements.txt`,
   but are only actually used when `--base-url`/`LITELLM_BASE_URL` is set
 - `Pillow` installs by default via `requirements.txt`, used to downscale
@@ -187,7 +192,8 @@ the event schema and lifecycle.
 | `slack_bot.py` | Slack bot entry point (Socket Mode) — see [`docs/slack.md`](docs/slack.md) |
 | `slack_bot/` | Slack integration layer — Bolt event wiring, per-thread sessions, live-region adapter |
 | `tests/test_slack_bot.py` | Automated tests for Slack access control, throttled live-updates, and thread-session locking — no live Slack/network needed |
-| `bin/rg` | Bundled ripgrep binary (aarch64-apple-darwin) |
+| `bin/rg-darwin-arm64` | Bundled ripgrep binary, macOS Apple Silicon |
+| `bin/rg-linux-x86_64` | Bundled ripgrep binary, Linux x86-64 |
 | `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), [`docs/logging.md`](docs/logging.md), and [`docs/slack.md`](docs/slack.md) |
 
 ## Exit

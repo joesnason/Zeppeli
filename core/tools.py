@@ -6,12 +6,48 @@ to the model in core/agent.py and invoked by the UI layer's turn loop.
 
 import json
 import pathlib
+import platform
+import shutil
 import subprocess
 from langchain_core.tools import tool
 
 # core/tools.py lives one directory below the repo root, so climb one level
-# to find bin/rg regardless of the caller's cwd.
-RG_BIN = str(pathlib.Path(__file__).parent.parent / "bin" / "rg")
+# to find bin/ regardless of the caller's cwd.
+_BIN_DIR = pathlib.Path(__file__).parent.parent / "bin"
+
+# Which bundled binary (if any) matches the current platform/architecture.
+# platform.machine() spells arm64 differently across OS/Python versions
+# (e.g. "arm64" on macOS, sometimes "aarch64" elsewhere), so both are
+# mapped to the same darwin binary.
+_BUNDLED_RG_BY_PLATFORM = {
+    ("Darwin", "arm64"): "rg-darwin-arm64",
+    ("Darwin", "aarch64"): "rg-darwin-arm64",
+    ("Linux", "x86_64"): "rg-linux-x86_64",
+}
+
+
+def _find_rg_bin() -> str | None:
+    """Resolve which ripgrep binary rg_search() should invoke: prefer a
+    system-installed `rg` on PATH (works for any platform/architecture
+    the user has it installed for, including ones not bundled here),
+    falling back to a bundled binary matching the current platform/
+    architecture (zero-setup on macOS arm64 and Linux x86_64 — see
+    bin/). Returns None if neither exists, so rg_search() can report a
+    clear, actionable error instead of crashing on an OSError from a
+    wrong-platform binary (e.g. "Exec format error" from trying to run
+    a macOS binary on Linux, or vice versa)."""
+    system_rg = shutil.which("rg")
+    if system_rg:
+        return system_rg
+    bundled_name = _BUNDLED_RG_BY_PLATFORM.get((platform.system(), platform.machine()))
+    if bundled_name:
+        bundled = _BIN_DIR / bundled_name
+        if bundled.is_file():
+            return str(bundled)
+    return None
+
+
+RG_BIN = _find_rg_bin()  # resolved once at import; may be None — see rg_search()
 
 
 @tool
@@ -43,10 +79,23 @@ def rg_search(pattern: str, path: str = ".", glob: str = "", max_bytes: int = 50
     """Search file contents using ripgrep. Supports regex. Use glob to filter by filename (e.g. '*.py').
     Output is capped at max_bytes (default 50000) so a broad match against a huge file (e.g. a build
     log) can't blow out the model's context window in one call — narrow the pattern or glob if truncated."""
+    if RG_BIN is None:
+        return (
+            "Error: ripgrep ('rg') isn't available for this platform. Install it — "
+            "macOS: `brew install ripgrep`; Debian/Ubuntu: `sudo apt install ripgrep`; "
+            "Fedora: `sudo dnf install ripgrep` — then restart."
+        )
     cmd = [RG_BIN, "--no-heading", "--color=never", pattern, path]
     if glob:
         cmd += ["--glob", glob]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError as e:
+        # A launch failure (wrong-platform binary, corrupted file,
+        # permissions) never even produces a returncode — subprocess.run
+        # raises instead. Report it as a normal tool-error string rather
+        # than letting it propagate and crash the whole process.
+        return f"Error: couldn't run ripgrep at {RG_BIN}: {e}"
     if result.returncode == 2:
         return f"Error: {result.stderr.strip()}"
     output = result.stdout.strip()
