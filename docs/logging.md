@@ -159,11 +159,12 @@ background-thread-plus-queue non-blocking model, same "never crash the
 chat" swallow-all-exceptions philosophy — but appends JSONL lines instead
 of rewriting a whole JSON document:
 
-- A dedicated background daemon thread (`core/eventlog.py`'s
-  `_writer_loop()`) consumes a module-level `queue.Queue`, appending one
-  line (`open(path, "a").write(json.dumps(line) + "\n")`) per item,
-  sequentially, in FIFO order. Since a single thread is the only writer,
-  there's no interleaving risk to guard against — no atomic-replace
+- A dedicated background daemon thread — the same `core/queued_writer.py`
+  `QueuedWriter` wrapper `core/sessions.py` uses, constructed with
+  `core/eventlog.py`'s own `_append_jsonl()` — consumes its queue,
+  appending one line (`open(path, "a").write(json.dumps(line) + "\n")`)
+  per item, sequentially, in FIFO order. Since a single thread is the only
+  writer, there's no interleaving risk to guard against — no atomic-replace
   machinery needed the way whole-file rewrites need it.
 - Every `log_*()` function enqueues and returns immediately — slow disk
   I/O never blocks a turn — and swallows every exception itself, same as

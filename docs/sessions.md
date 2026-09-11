@@ -91,10 +91,13 @@ session actually needs saving.
 `save_session()` never writes to disk itself — it touches `updatedAt`,
 serializes the session to a plain `dict` (`StoredSession.to_dict()`, which
 naturally deep-copies everything, decoupling it from `session`'s further
-in-place mutation), and enqueues `(path, dict)` onto a module-level
-`queue.Queue`. A single background daemon thread (`core/sessions.py`'s
-`_writer_loop()`) consumes that queue **sequentially, in FIFO order**, and
-does the actual atomic write. This means:
+in-place mutation), and enqueues `(path, dict)` onto a
+`core/queued_writer.py` `QueuedWriter` — a small generic wrapper shared
+with `core/eventlog.py`, owning the queue/thread/flush machinery so
+neither module reimplements it. A single background daemon thread
+consumes that queue **sequentially, in FIFO order**, and does the actual
+atomic write (`core/sessions.py`'s `_write_json_atomic()`, passed to the
+`QueuedWriter` at import time). This means:
 
 - `save_session()` returns immediately — slow disk I/O (a network-mounted
   home directory, a busy disk) never blocks the chat/turn flow, even though

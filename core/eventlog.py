@@ -17,19 +17,21 @@ Design notes (mirrors core/sessions.py's write-up):
   side feature; a disk-full/permissions/serialization bug must never crash
   the chat or interrupt the user's turn.
 - Every log_*() function is non-blocking: each event line is enqueued and
-  appended to disk by a single background daemon thread, so slow disk I/O
-  never blocks the chat/turn flow. flush_pending_events() blocks until the
-  queue is drained; it's called explicitly at the end of one-shot -p mode
-  and via atexit on normal interpreter exit (which also fires on an
-  uncaught exception/KeyboardInterrupt reaching the top of the script) —
-  same accepted residual risk as core/sessions.py: a hard kill/crash
-  between enqueue and the actual write can still lose the most recent
-  event.
+  appended to disk by a single background daemon thread (core/
+  queued_writer.py's QueuedWriter, shared with core/sessions.py), so slow
+  disk I/O never blocks the chat/turn flow. flush_pending_events() blocks
+  until the queue is drained; it's called explicitly at the end of
+  one-shot -p mode and via atexit on normal interpreter exit (which also
+  fires on an uncaught exception/KeyboardInterrupt reaching the top of the
+  script) — same accepted residual risk as core/sessions.py: a hard
+  kill/crash between enqueue and the actual write can still lose the most
+  recent event.
 - Unlike core/sessions.py's whole-file JSON rewrites (temp file +
   os.replace()), this is an append-only log, so each write is a plain
-  `open(path, "a").write(line + "\\n")` under a dedicated writer thread —
-  a single writer thread means appends are never interleaved, so there's
-  no torn-write risk to guard against with atomic-replace machinery.
+  `open(path, "a").write(line + "\\n")` under that same dedicated writer
+  thread — a single writer thread means appends are never interleaved, so
+  there's no torn-write risk to guard against with atomic-replace
+  machinery.
 
 Known limitations (see docs/logging.md):
 - model_activity's "thinking" field is populated for local Ollama runs on
@@ -55,14 +57,13 @@ import atexit
 import dataclasses
 import json
 import os
-import queue
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from langchain_core.messages import AIMessage, ToolMessage
 
 from .messages import extract_text, tool_result_ok
+from .queued_writer import QueuedWriter
 
 LOGS_DIR = Path.home() / ".zeppeli" / "logs"
 
@@ -197,10 +198,11 @@ def log_cli_error(session_id: str, error: Exception) -> None:
 
 # --- disk I/O ---------------------------------------------------------------
 #
-# Every write goes through a single background thread consuming a FIFO
-# queue.Queue, so log_*() never blocks its caller on disk I/O. Appends from
-# a single writer thread are never interleaved, so no atomic-replace
-# machinery is needed the way core/sessions.py's whole-file rewrites need it.
+# Every write goes through a QueuedWriter (core/queued_writer.py) — a
+# single background thread consuming a FIFO queue — so log_*() never
+# blocks its caller on disk I/O. Appends from that single writer thread
+# are never interleaved, so no atomic-replace machinery is needed the way
+# core/sessions.py's whole-file rewrites need it.
 
 def _append_jsonl(path: Path, line: dict) -> None:
     """Raises on failure — internal, only ever called from the background
@@ -210,38 +212,22 @@ def _append_jsonl(path: Path, line: dict) -> None:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
-_write_queue: "queue.Queue[tuple[Path, dict]]" = queue.Queue()
-_writer_thread: threading.Thread | None = None
-_writer_lock = threading.Lock()
+def _do_write(path: Path, line: dict) -> None:
+    """Indirection so tests can monkeypatch the module-level
+    `_append_jsonl` name and have QueuedWriter's background thread pick up
+    the replacement — QueuedWriter is constructed once at import time,
+    before any test gets a chance to patch anything, so it can't hold a
+    direct reference to `_append_jsonl` itself."""
+    _append_jsonl(path, line)
 
 
-def _writer_loop() -> None:
-    while True:
-        path, line = _write_queue.get()
-        try:
-            _append_jsonl(path, line)
-        except Exception:
-            # Swallow per-item — a single bad write (disk full, permission
-            # denied) must not kill this thread, or every event queued
-            # after it would silently never be processed again.
-            pass
-        finally:
-            _write_queue.task_done()
-
-
-def _ensure_writer_thread() -> None:
-    global _writer_thread
-    with _writer_lock:
-        if _writer_thread is None:
-            _writer_thread = threading.Thread(
-                target=_writer_loop, daemon=True, name="zeppeli-eventlog-writer")
-            _writer_thread.start()
+_writer: QueuedWriter[dict] = QueuedWriter(_do_write, thread_name="zeppeli-eventlog-writer")
 
 
 def flush_pending_events() -> None:
     """Block until every event enqueued so far has been written to disk.
     Returns immediately if nothing has ever been enqueued."""
-    _write_queue.join()
+    _writer.flush()
 
 
 atexit.register(flush_pending_events)
@@ -254,7 +240,6 @@ def _emit(session_id: str, line: dict) -> None:
     permissions, or serialization bug must never crash the chat or
     interrupt the user's turn."""
     try:
-        _ensure_writer_thread()
-        _write_queue.put((log_path(session_id), line))
+        _writer.enqueue(log_path(session_id), line)
     except Exception:
         pass

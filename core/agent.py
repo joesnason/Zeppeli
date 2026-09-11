@@ -42,6 +42,20 @@ def load_llm(model: str | None = None, base_url: str | None = None, api_key: str
     return ChatOllama(model=model or MODEL).bind_tools(TOOLS)
 
 
+def _ollama_show(model: str | None):
+    """Shared lazy-import + call behind get_context_window() and
+    model_supports_reasoning() — both just read different fields off the
+    same ollama.show() response. Returns None on any failure (Ollama
+    unreachable, unknown model) — never raises; each caller's own
+    unexpected-response-shape handling stays in the caller, not here."""
+    import ollama  # lazy: mirrors load_llm()'s own litellm lazy-import
+
+    try:
+        return ollama.show(model or MODEL)
+    except Exception:
+        return None
+
+
 def get_context_window(model: str | None = None) -> int | None:
     """Look up a local-Ollama model's context window (max tokens) via
     ollama.show(). Returns None on any failure (Ollama unreachable, unknown
@@ -49,11 +63,8 @@ def get_context_window(model: str | None = None) -> int | None:
     cloud/litellm models; callers should only invoke this when base_url is
     not set.
     """
-    import ollama  # lazy: mirrors load_llm()'s own litellm lazy-import
-
-    try:
-        info = ollama.show(model or MODEL)
-    except Exception:
+    info = _ollama_show(model)
+    if info is None:
         return None
 
     modelinfo = info.modelinfo or {}
@@ -78,11 +89,8 @@ def model_supports_reasoning(model: str | None = None) -> bool:
     Not meaningful for cloud/litellm models; callers should only invoke
     this when base_url is not set.
     """
-    import ollama  # lazy: mirrors get_context_window()'s own lazy import
-
-    try:
-        info = ollama.show(model or MODEL)
-    except Exception:
+    info = _ollama_show(model)
+    if info is None:
         return False
 
     return "thinking" in (info.capabilities or [])

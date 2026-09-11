@@ -18,7 +18,8 @@ Design notes (see docs/sessions.md for the full write-up):
   a disk-full/permissions/serialization bug must never crash the chat or
   interrupt the user's turn.
 - save_session() is non-blocking: every write is enqueued and processed
-  sequentially by a single background thread, so slow disk I/O never
+  sequentially by a single background thread (core/queued_writer.py's
+  QueuedWriter, shared with core/eventlog.py), so slow disk I/O never
   blocks the chat/turn flow. flush_pending_writes() blocks until the queue
   is drained; it's called explicitly at the end of one-shot -p mode and
   via atexit on normal interpreter exit (which also fires on an uncaught
@@ -33,9 +34,7 @@ import atexit
 import dataclasses
 import json
 import os
-import queue
 import tempfile
-import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -44,6 +43,7 @@ from pathlib import Path
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from .messages import extract_text, tool_result_ok
+from .queued_writer import QueuedWriter
 
 SESSIONS_DIR = Path.home() / ".zeppeli" / "sessions"
 STORED_SESSION_VERSION = 1
@@ -298,14 +298,15 @@ def append_history_from_messages(session: StoredSession, messages: list, start_i
 
 # --- disk I/O ---------------------------------------------------------------
 #
-# Every write goes through a single background thread consuming a FIFO
-# queue.Queue, so save_session() never blocks its caller on disk I/O and
-# concurrent saves are always applied in the order they were made (the
-# latest call always wins, never overwritten by an out-of-order earlier
-# one). flush_pending_writes() is the synchronization point — it blocks
-# until every enqueued write has actually hit disk — used by tests, by
-# ui/repl.py's one-shot -p mode before it returns, and via atexit below for
-# the interactive REPL's eventual exit.
+# Every write goes through a QueuedWriter (core/queued_writer.py) — a
+# single background thread consuming a FIFO queue — so save_session()
+# never blocks its caller on disk I/O and concurrent saves are always
+# applied in the order they were made (the latest call always wins, never
+# overwritten by an out-of-order earlier one). flush_pending_writes() is
+# the synchronization point — it blocks until every enqueued write has
+# actually hit disk — used by tests, by ui/repl.py's one-shot -p mode
+# before it returns, and via atexit below for the interactive REPL's
+# eventual exit.
 
 def _write_json_atomic(path: Path, data: dict) -> None:
     """Raises on failure — internal, exercised directly by tests and only
@@ -333,32 +334,16 @@ def _write_json_atomic(path: Path, data: dict) -> None:
         raise
 
 
-_write_queue: "queue.Queue[tuple[Path, dict]]" = queue.Queue()
-_writer_thread: threading.Thread | None = None
-_writer_lock = threading.Lock()
+def _do_write(path: Path, data: dict) -> None:
+    """Indirection so tests can monkeypatch the module-level
+    `_write_json_atomic` name and have QueuedWriter's background thread
+    pick up the replacement — QueuedWriter is constructed once at import
+    time, before any test gets a chance to patch anything, so it can't
+    hold a direct reference to `_write_json_atomic` itself."""
+    _write_json_atomic(path, data)
 
 
-def _writer_loop() -> None:
-    while True:
-        path, data = _write_queue.get()
-        try:
-            _write_json_atomic(path, data)
-        except Exception:
-            # Swallow per-item — a single bad write (disk full, permission
-            # denied) must not kill this thread, or every write queued
-            # after it would silently never be processed again.
-            pass
-        finally:
-            _write_queue.task_done()
-
-
-def _ensure_writer_thread() -> None:
-    global _writer_thread
-    with _writer_lock:
-        if _writer_thread is None:
-            _writer_thread = threading.Thread(
-                target=_writer_loop, daemon=True, name="zeppeli-session-writer")
-            _writer_thread.start()
+_writer: QueuedWriter[dict] = QueuedWriter(_do_write, thread_name="zeppeli-session-writer")
 
 
 def flush_pending_writes() -> None:
@@ -369,7 +354,7 @@ def flush_pending_writes() -> None:
     returning; it's also registered below via atexit for normal interpreter
     shutdown (including an uncaught exception/KeyboardInterrupt reaching
     the top of the script)."""
-    _write_queue.join()
+    _writer.flush()
 
 
 atexit.register(flush_pending_writes)
@@ -386,7 +371,6 @@ def save_session(session: StoredSession) -> None:
     session.updatedAt = _now_iso()
     try:
         data = session.to_dict()
-        _ensure_writer_thread()
-        _write_queue.put((session_file_path(session.id), data))
+        _writer.enqueue(session_file_path(session.id), data)
     except Exception:
         pass
