@@ -8,13 +8,16 @@ objects. Style matches test_streaming.py/test_permission_modes.py.
 
 import asyncio
 
+from langchain_core.messages import SystemMessage
+
 import slack_bot.attachments as attachments_module
 import slack_bot.live as live_module
+from core.agent import SYSTEM_PROMPT
 from slack_bot.access import is_allowed
 from slack_bot.attachments import AttachmentError, _is_supported, _sanitize_filename, process_attachment
 from slack_bot.handlers import _strip_bot_mention, register_handlers
 from slack_bot.live import SlackLive
-from slack_bot.sessions import ThreadSession, ThreadRegistry
+from slack_bot.sessions import ThreadSession, ThreadRegistry, _SLACK_LANGUAGE_INSTRUCTION
 
 
 def _run(coro):
@@ -178,6 +181,28 @@ def test_thread_registry_get_or_create_returns_same_session_for_same_thread(tmp_
         s3 = await registry.get_or_create("T2", "/tmp", "gemma4:e2b")
         assert s3 is not s1
         assert registry.known_thread_ts() == {"T1", "T2"}
+
+    _run(body())
+
+
+def test_thread_registry_system_message_includes_traditional_chinese_instruction(tmp_zeppeli_dirs):
+    # Slack threads must always reply in Traditional Chinese, regardless
+    # of the user's own message language — but the shared SYSTEM_PROMPT
+    # constant (also used by the terminal REPL/-p mode) must stay
+    # unmodified, so this instruction is a Slack-only addition.
+    registry = ThreadRegistry()
+
+    async def body():
+        session = await registry.get_or_create("T1", "/tmp", "gemma4:e2b")
+        assert len(session.messages) == 1
+        system_message = session.messages[0]
+        assert isinstance(system_message, SystemMessage)
+        assert "繁體中文" in system_message.content
+        assert "Traditional Chinese" in system_message.content
+        assert SYSTEM_PROMPT in system_message.content
+        assert "Working directory: /tmp" in system_message.content
+        # The shared constant itself must never be mutated in place.
+        assert "繁體中文" not in SYSTEM_PROMPT
 
     _run(body())
 

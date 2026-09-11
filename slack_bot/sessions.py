@@ -9,6 +9,11 @@ known limitation in docs/slack.md rather than built speculatively. A
 process restart clears all in-memory conversational context (though the
 on-disk core/sessions.py + core/eventlog.py records survive, same as the
 terminal REPL).
+
+Each thread's system message is core/agent.py's shared SYSTEM_PROMPT plus
+a Slack-only language instruction (_SLACK_LANGUAGE_INSTRUCTION below) —
+Slack replies are always in Traditional Chinese, regardless of the
+terminal REPL/-p mode's language-neutral default. See docs/slack.md.
 """
 
 import asyncio
@@ -20,6 +25,16 @@ from langchain_core.messages import SystemMessage
 
 from core.agent import SYSTEM_PROMPT
 from core.sessions import StoredSession, create_session, save_session
+
+# Slack-only addition to the shared SYSTEM_PROMPT — appended here rather
+# than in core/agent.py so the terminal REPL/-p mode (which share that
+# same constant) are unaffected; Slack replies should always be in
+# Traditional Chinese regardless of what language the user writes in.
+_SLACK_LANGUAGE_INSTRUCTION = (
+    "\n\nYou are being used through Slack. Always reply in Traditional "
+    "Chinese (繁體中文), regardless of what language the user's message is "
+    "written in."
+)
 
 
 @dataclass
@@ -50,7 +65,10 @@ class ThreadRegistry:
             session = self._threads.get(thread_ts)
             if session is None:
                 full_id = str(uuid.uuid4())
-                messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
+                messages = [SystemMessage(
+                    content=SYSTEM_PROMPT + _SLACK_LANGUAGE_INSTRUCTION
+                    + f"\n\nWorking directory: {initial_cwd}"
+                )]
                 history_session = create_session(full_id, initial_cwd, model)
                 save_session(history_session)
                 session = ThreadSession(messages=messages, session_id=full_id, history_session=history_session)

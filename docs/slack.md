@@ -136,6 +136,18 @@ still land in `~/.zeppeli/sessions/`/`~/.zeppeli/logs/` exactly like the
 terminal REPL, though — only the live in-memory conversation is lost,
 not the historical record.
 
+## Reply language
+
+The bot always replies in Traditional Chinese (繁體中文), regardless of
+what language the user's message is written in. This is Slack-specific:
+`slack_bot/sessions.py`'s `ThreadRegistry.get_or_create()` appends a
+`_SLACK_LANGUAGE_INSTRUCTION` string to `core/agent.py`'s shared
+`SYSTEM_PROMPT` when it builds a new thread's initial `SystemMessage` —
+the terminal REPL/`-p` mode use `SYSTEM_PROMPT` unmodified and stay
+language-neutral. Not currently configurable per-workspace/thread; change
+`_SLACK_LANGUAGE_INSTRUCTION` directly if you need different wording or
+language.
+
 ## File attachments
 
 Attaching a file to a message (e.g. a log file) lets the bot analyze it
