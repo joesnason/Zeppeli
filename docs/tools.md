@@ -9,7 +9,7 @@ details. All tool code lives in `core/tools.py` — see `CLAUDE.md`'s
 All tools are defined in `core/tools.py`:
 
 ```python
-TOOLS = [list_files, glob_files, rg_search, read_file, write_file, delete_file]
+TOOLS = [list_files, glob_files, rg_search, read_file, tail_file, write_file, delete_file]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 ```
 
@@ -28,6 +28,7 @@ PATH_ARGS = {
     "glob_files": ["cwd"],
     "rg_search": ["path"],
     "read_file": ["path"],
+    "tail_file": ["path"],
     "write_file": ["path"],
     "delete_file": ["path"],
 }
@@ -180,7 +181,7 @@ automatically participates in all three permission modes via
 
 Like the pre-tool hooks above, this is a cross-cutting mechanism applied in
 `ui/turn.py`'s `run_turn()` — not a per-tool cap. It runs uniformly on
-**every** tool result (all six tools) and on the CANCELLED
+**every** tool result (all seven tools) and on the CANCELLED
 permission-denial message, right before each becomes `ToolMessage` content
 sent back to the model:
 
@@ -213,11 +214,11 @@ marker itself, since it operates as a blunt cut over whatever the line rule
 produced.
 
 This is a generic backstop layered on top of, not a replacement for, the
-per-tool caps described below — `rg_search`'s own `max_bytes` cap and
-`read_file`'s pagination both still apply first, and this cap only trims
-further if their output is still large. It's also the *only* cap for
-`list_files`, `glob_files`, `write_file`, and `delete_file`, which have no
-per-tool cap of their own.
+per-tool caps described below — `rg_search`'s own `max_bytes` cap,
+`read_file`'s pagination, and `tail_file`'s own `max_bytes`-bounded window
+all still apply first, and this cap only trims further if their output is
+still large. It's also the *only* cap for `list_files`, `glob_files`,
+`write_file`, and `delete_file`, which have no per-tool cap of their own.
 
 Truncation only affects what the model sees. The untruncated original is
 preserved in `ToolMessage.additional_kwargs["full_output"]`, which
@@ -367,6 +368,68 @@ past it (fixed after a real build-log analysis hit exactly this).
 Errors: `FileNotFoundError` and an `offset` past end-of-file both return a
 `[read_file] Error: ...` string rather than raising, since tool results must
 be strings the model can read.
+
+### `tail_file(path, lines=100, max_bytes=98304)`
+
+Reads the last `lines` lines of a file — e.g. the most recent entries in a
+log — without loading the whole file into memory, so it stays fast and
+memory-bounded even on multi-GB files. This is a separate tool from
+`read_file`, not a mode of it: `read_file`'s `offset`/`limit` is a
+forward, resumable-pagination contract, while tail reading is a genuinely
+different algorithm (seek from the end, read backward-bounded) — folding
+both into one function would force `offset`/footer semantics to mean two
+different things depending on a mode flag.
+
+Algorithm: seek to `max(0, filesize - max_bytes)`, read forward to EOF
+(bounded to at most `max_bytes` bytes, opened in binary mode so the seek
+is byte-precise), decode with `errors="replace"` (matching `read_file`'s
+approach), then:
+
+```python
+filesize = p.stat().st_size
+seek_pos = max(0, filesize - max_bytes)
+with open(path, "rb") as f:
+    f.seek(seek_pos)
+    raw = f.read()
+```
+
+- If `seek_pos > 0` (the window doesn't start at the true beginning of the
+  file), the first line of that window is very likely partial — cut
+  mid-line by the seek — so it's dropped, the same way real `tail`
+  discards a partial leading line after a backward seek. This is
+  unconditional, even on the rare exact-line-boundary seek: a known,
+  accepted one-line-short bias, safer than risking a corrupted fragment.
+- If the window contains no newline at all (`max_bytes` smaller than the
+  file's actual last line), the whole window is that one partial line —
+  it's dropped entirely rather than kept as a truncated slice (unlike
+  `read_file`'s oversized-single-line handling). There's no offset/
+  pagination state here that could get stuck in a loop the way
+  `read_file`'s old bug did, so the fix is simply "call again with a
+  larger `max_bytes`," which the footer says explicitly.
+- The last `lines` lines of whatever remains are kept.
+
+Return format mirrors `read_file`'s header/footer style:
+
+```
+[File: <path> | last <N> lines | <bytes> bytes]
+<...file content...>
+[Showing last <N> lines]
+```
+
+The footer is one of three variants:
+
+- `[Showing last N lines]` — the full requested line count was found.
+- `[Beginning of file reached — file has only M lines]` — the window
+  reached the true start of the file (`seek_pos == 0`) and the file
+  genuinely has fewer than `lines` lines total; not a truncation artifact.
+- `[Only found M of requested N lines within the last max_bytes bytes of
+  the file — increase max_bytes to search further back]` — the
+  `max_bytes` window (after the partial-first-line drop) came up short of
+  `lines`, but more of the file exists before it.
+
+Errors: file not found, path is a directory, or any other exception all
+return a `[tail_file] Error: ...` string rather than raising, matching
+`read_file`/`delete_file`'s style.
 
 ## File editing tools
 

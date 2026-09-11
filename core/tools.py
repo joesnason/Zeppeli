@@ -181,6 +181,76 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
 
 
 @tool
+def tail_file(path: str, lines: int = 100, max_bytes: int = 98304) -> str:
+    """Read the last `lines` lines (default 100) of a file, e.g. to see the
+    most recent entries in a log. Reads at most max_bytes (default 98304 =
+    96KB) from the end of the file, so it stays fast and memory-bounded even
+    on multi-GB files — it never loads the whole file into memory. If the
+    file has more content before that max_bytes window, the footer says so
+    and suggests raising max_bytes; if the window reached the true start of
+    the file (or the file has fewer than `lines` lines total), the footer
+    says that too."""
+    try:
+        p = pathlib.Path(path)
+        if not p.exists():
+            return f"[tail_file] Error: file not found: {path}"
+        if p.is_dir():
+            return f"[tail_file] Error: {path} is a directory, not a file"
+
+        filesize = p.stat().st_size
+        seek_pos = max(0, filesize - max_bytes)
+        with open(path, "rb") as f:
+            f.seek(seek_pos)
+            raw = f.read()  # bounded to <= max_bytes bytes
+
+        text = raw.decode("utf-8", errors="replace")
+
+        if seek_pos > 0:
+            # Seeked into the middle of the file, so the first line of this
+            # window is very likely partial (cut mid-line by the seek) —
+            # drop it, the same way real `tail` discards a partial leading
+            # line after a backward seek. If the window has no newline at
+            # all (max_bytes smaller than the file's actual last line), the
+            # whole window is that one partial line — dropping it yields
+            # zero lines here rather than a corrupted fragment; the footer
+            # below tells the model to raise max_bytes. Unlike read_file's
+            # oversized-line handling (which keeps a truncated slice), this
+            # is a deliberate all-or-nothing drop: there's no offset/
+            # pagination state here that could get stuck in a loop, so the
+            # fix is simply "call again with a larger max_bytes."
+            nl_idx = text.find("\n")
+            text = text[nl_idx + 1:] if nl_idx != -1 else ""
+
+        # Dropping the first line whenever seek_pos > 0 is unconditional,
+        # even on the rare exact-line-boundary seek — the same one-line-
+        # short bias real `tail` implementations accept.
+        all_lines = text.splitlines(keepends=True) if text else []
+        kept = all_lines[-lines:] if lines > 0 else []
+        kept_count = len(kept)
+        content = "".join(kept)
+        total_bytes = len(content.encode("utf-8", errors="replace"))
+
+        header = f"[File: {path} | last {kept_count} lines | {total_bytes} bytes]"
+        if kept_count >= lines:
+            footer = f"[Showing last {kept_count} lines]"
+        elif seek_pos == 0:
+            footer = f"[Beginning of file reached — file has only {kept_count} lines]"
+        else:
+            footer = (
+                f"[Only found {kept_count} of requested {lines} lines within "
+                f"the last {max_bytes} bytes of the file — increase max_bytes "
+                "to search further back]"
+            )
+        # header + "\n" + content + footer, no separator before the footer —
+        # matches read_file's existing join style, including the same
+        # no-trailing-newline glue quirk read_file already has today.
+        return header + "\n" + content + footer
+
+    except Exception as e:
+        return f"[tail_file] Error: {e}"
+
+
+@tool
 def write_file(path: str, content: str) -> str:
     """Write content to a file, creating it if it does not exist or replacing all existing content."""
     try:
@@ -207,7 +277,7 @@ def delete_file(path: str) -> str:
         return f"Error: {e}"
 
 
-TOOLS = [list_files, glob_files, rg_search, read_file, write_file, delete_file]
+TOOLS = [list_files, glob_files, rg_search, read_file, tail_file, write_file, delete_file]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 PATH_ARGS = {
@@ -215,6 +285,7 @@ PATH_ARGS = {
     "glob_files": ["cwd"],
     "rg_search": ["path"],
     "read_file": ["path"],
+    "tail_file": ["path"],
     "write_file": ["path"],
     "delete_file": ["path"],
 }

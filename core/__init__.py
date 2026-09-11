@@ -14,6 +14,7 @@ from .tools import (
     glob_files,
     rg_search,
     read_file,
+    tail_file,
     write_file,
     delete_file,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "glob_files",
     "rg_search",
     "read_file",
+    "tail_file",
     "write_file",
     "delete_file",
     "ImageError",
