@@ -149,10 +149,11 @@ around who can trigger it.
 
 ## Tools
 
-The AI has access to tools for searching/inspecting files and for editing
-(write/delete) files, with destructive actions requiring interactive
-confirmation. See [`docs/tools.md`](docs/tools.md) for the full list and
-implementation details.
+The AI has access to tools for searching/inspecting files, editing
+(write/delete) files, and running shell commands, with destructive actions
+and shell commands outside the current workspace (or using `sudo`)
+requiring interactive confirmation. See [`docs/tools.md`](docs/tools.md)
+for the full list and implementation details.
 
 ## Session History
 

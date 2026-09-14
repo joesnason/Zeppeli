@@ -15,6 +15,7 @@ import pytest
 
 import cli
 import core.agent as agent
+import core.tools as tools
 
 _ENV_VARS = ("LITELLM_BASE_URL", "LITELLM_MODEL", "LITELLM_API_KEY")
 
@@ -321,6 +322,65 @@ def test_load_llm_cloud_branch_omits_api_key_when_absent(monkeypatch):
     monkeypatch.setitem(sys.modules, "langchain_litellm", fake_module)
     agent.load_llm(model="openai/gpt-4o-mini", base_url="http://x")
     assert "api_key" not in received
+
+
+def test_load_llm_defaults_to_full_tools_list(monkeypatch):
+    bound = {}
+
+    class _SpyChatOllama:
+        def __init__(self, model):
+            pass
+
+        def bind_tools(self, tools):
+            bound["tools"] = tools
+            return self
+
+    monkeypatch.setattr(agent, "ChatOllama", _SpyChatOllama)
+    agent.load_llm()
+    assert bound["tools"] is agent.TOOLS
+
+
+def test_load_llm_ollama_branch_respects_tools_override(monkeypatch):
+    bound = {}
+
+    class _SpyChatOllama:
+        def __init__(self, model):
+            pass
+
+        def bind_tools(self, tools):
+            bound["tools"] = tools
+            return self
+
+    monkeypatch.setattr(agent, "ChatOllama", _SpyChatOllama)
+    sentinel = [tools.list_files]
+    agent.load_llm(tools=sentinel)
+    assert bound["tools"] is sentinel
+
+
+def test_load_llm_cloud_branch_respects_tools_override(monkeypatch):
+    bound = {}
+
+    class _SpyChatLiteLLM:
+        def __init__(self, **kwargs):
+            pass
+
+        def bind_tools(self, tools):
+            bound["tools"] = tools
+            return self
+
+    fake_module = types.ModuleType("langchain_litellm")
+    fake_module.ChatLiteLLM = _SpyChatLiteLLM
+    monkeypatch.setitem(sys.modules, "langchain_litellm", fake_module)
+    sentinel = [tools.list_files]
+    agent.load_llm(model="openai/gpt-4o-mini", base_url="http://x", tools=sentinel)
+    assert bound["tools"] is sentinel
+
+
+def test_slack_tools_excludes_run_bash_but_tools_includes_it():
+    assert "run_bash" not in {t.name for t in tools.SLACK_TOOLS}
+    assert "run_bash" in {t.name for t in tools.TOOLS}
+    # SLACK_TOOLS is otherwise identical to TOOLS.
+    assert {t.name for t in tools.SLACK_TOOLS} == {t.name for t in tools.TOOLS} - {"run_bash"}
 
 
 # --- core/agent.py: get_context_window() -----------------------------------

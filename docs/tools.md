@@ -9,13 +9,18 @@ details. All tool code lives in `core/tools.py` — see `CLAUDE.md`'s
 All tools are defined in `core/tools.py`:
 
 ```python
-TOOLS = [list_files, glob_files, rg_search, read_file, tail_file, write_file, delete_file]
+TOOLS = [list_files, glob_files, rg_search, read_file, tail_file, run_bash, write_file, delete_file]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
+SLACK_TOOLS = [t for t in TOOLS if t.name != "run_bash"]
 ```
 
 `TOOLS` feeds `load_llm()`'s `bind_tools()` call; `TOOLS_BY_NAME` is used by
 `ui/turn.py`'s `run_turn()` (and `tests/test_tool_call.py`'s `run_agent()`) to look
-up and invoke a tool by name once the model requests a call.
+up and invoke a tool by name once the model requests a call. `SLACK_TOOLS`
+is what `slack_bot.py` binds instead of `TOOLS` — `load_llm()` takes an
+optional `tools` param for exactly this — since the Slack bot always runs
+unattended and `run_bash`'s permission prompts have no one to answer them
+(`SlackLive.ask_menu()` always denies; see `docs/slack.md`).
 
 ## Path resolution
 
@@ -29,6 +34,7 @@ PATH_ARGS = {
     "rg_search": ["path"],
     "read_file": ["path"],
     "tail_file": ["path"],
+    "run_bash": ["cwd"],
     "write_file": ["path"],
     "delete_file": ["path"],
 }
@@ -76,6 +82,7 @@ registry both live in `ui/permissions.py`:
 PRE_TOOL_HOOKS: dict[str, callable] = {
     "write_file": permission_ask,
     "delete_file": permission_ask,
+    "run_bash": permission_ask,
 }
 ```
 
@@ -84,7 +91,11 @@ its values are no longer directly invocable: `permission_ask()` is `async`
 and needs a `live` argument (`ui/live_region.py`'s `LiveRegion`, or
 `SimpleLive` in one-shot `-p` mode) only available at call time, so
 `build_pre_tool_hooks()` always binds a fresh `live`-bound closure per call
-rather than copying `PRE_TOOL_HOOKS`'s values verbatim.
+rather than copying `PRE_TOOL_HOOKS`'s values verbatim. `run_bash`'s entry
+here is vestigial like the other two — its actual gating logic is a
+dedicated hook (`_make_bash_hook`), not `permission_ask` itself, since its
+policy differs from `write_file`/`delete_file`'s (see "run_bash's hook"
+below).
 
 `run_turn()` (`ui/turn.py`) doesn't read `PRE_TOOL_HOOKS` directly — it calls
 `build_pre_tool_hooks(mode, initial_cwd, live)` once per turn (right after
@@ -110,9 +121,9 @@ default none of them). The three mode constants live in `ui/permissions.py`:
 
 | Mode | Constant | Behavior |
 |------|----------|----------|
-| approval (default) | `MODE_APPROVAL` | Binds a fresh `permission_ask`-calling closure to every tool key in `PRE_TOOL_HOOKS` — every `write_file`/`delete_file` call prompts via `permission_ask()`, exactly as described above. |
-| yolo | `MODE_YOLO` | Returns `{}` — no hooks at all. `hooks.get(tc["name"])` is always `None`, so every tool call runs unguarded, with no prompt of any kind. |
-| auto | `MODE_AUTO` | Returns `write_file`/`delete_file` mapped to a hook built by `_make_auto_hook(initial_cwd, live)`. |
+| approval (default) | `MODE_APPROVAL` | Binds a fresh `permission_ask`-calling closure to `write_file`/`delete_file` — every call prompts via `permission_ask()`, exactly as described above. `run_bash` is not part of this closure — see below. |
+| yolo | `MODE_YOLO` | Returns `{}` — no hooks at all. `hooks.get(tc["name"])` is always `None`, so every tool call (including `run_bash`) runs unguarded, with no prompt of any kind. |
+| auto | `MODE_AUTO` | Maps `write_file`/`delete_file` to a hook built by `_make_auto_hook(initial_cwd, live)`. `run_bash` still uses its own hook (below), not this one. |
 
 `_make_auto_hook(initial_cwd, live)` returns an `async` hook that checks
 `_is_within_cwd(path, initial_cwd)` (resolves both sides with
@@ -121,6 +132,44 @@ the resolved path is inside `initial_cwd`, it auto-approves with a dim note
 and no prompt; otherwise it delegates to the real `permission_ask()`, so
 calls outside the launch directory still get the full interactive prompt
 (including turn/session remember-approval).
+
+#### `run_bash`'s hook
+
+`run_bash` doesn't fit the write/delete pattern above (approval mode always
+asks; only auto mode checks scope) — its policy is the *same in both
+approval and auto mode* (only yolo mode bypasses it), since it isn't
+"destructive" in the write/delete sense so much as "needs a scope/sudo
+check regardless of mode." `build_pre_tool_hooks()` gives it its own
+closure, `_make_bash_hook(initial_cwd, live)`:
+
+- Auto-runs with no prompt when **all** of the following hold: the
+  resolved `cwd` argument is inside `initial_cwd`, no path-like token
+  found in the `command` string resolves outside `initial_cwd`, and the
+  command doesn't invoke `sudo`.
+- Otherwise shows the same three-option menu as `permission_ask()`
+  (**Yes** / **Yes, always allow (this session)** / **No**), listing every
+  reason it triggered (working directory outside the workspace, a
+  referenced path outside the workspace, and/or `sudo`).
+- `sudo` detection (`_contains_sudo()`) is a simple `\bsudo\b` regex — not
+  a shell parse.
+- The workspace-escape check on the command string itself
+  (`_command_escapes_cwd()`) is a **heuristic**, not a full shell parse:
+  it tokenizes `command` with `shlex.split()`, treats any token containing
+  `/` or starting with `~` as a path candidate, resolves each the same way
+  `resolve_paths()` does, and flags the first one landing outside
+  `initial_cwd`. Absolute paths under `/dev/`, `/tmp/`, `/var/tmp/` are
+  exempted (common redirect/scratch targets, e.g. `> /dev/null`, that
+  aren't a meaningful workspace escape). Unparsable quoting (a `shlex`
+  `ValueError`) is treated as "can't verify" and always prompts, rather
+  than silently skipping the check. This won't catch every obfuscation
+  (e.g. a path built from a shell variable) — consistent with this
+  project's explicit "no sandbox, just a simple confirm-the-scope check"
+  design, not a security boundary.
+- Approvals are keyed by the exact `command` string (via `_key()`'s
+  `path`-or-`command` fallback — `run_bash` calls have no `path` arg), so
+  "always allow this session" remembers one specific command, not a
+  pattern.
+- Not available to the Slack bot at all — see `SLACK_TOOLS` above.
 
 `python3 cli.py -p "<prompt>"` (one-shot mode, see README) goes through the
 exact same `run_turn(..., mode)` call as a normal REPL turn — there's no
@@ -155,8 +204,9 @@ old approach can't coexist with a persistent toolbar):
 ### Approval records
 
 `ui/permissions.py` tracks approvals in two in-memory sets, keyed by
-**`(tool_name, path)`** so approving one file's write doesn't approve a
-different file's:
+**`(tool_name, path)`** — or `(tool_name, command)` for `run_bash`, which
+has no `path` arg — so approving one file's write (or one exact command)
+doesn't approve a different file's write (or a different command):
 
 ```python
 _session_approved: set[tuple[str, str]] = set()
@@ -181,7 +231,7 @@ automatically participates in all three permission modes via
 
 Like the pre-tool hooks above, this is a cross-cutting mechanism applied in
 `ui/turn.py`'s `run_turn()` — not a per-tool cap. It runs uniformly on
-**every** tool result (all seven tools) and on the CANCELLED
+**every** tool result (all eight tools) and on the CANCELLED
 permission-denial message, right before each becomes `ToolMessage` content
 sent back to the model:
 
@@ -431,10 +481,89 @@ Errors: file not found, path is a directory, or any other exception all
 return a `[tail_file] Error: ...` string rather than raising, matching
 `read_file`/`delete_file`'s style.
 
+## Shell execution tool
+
+### `run_bash(command, cwd=".", timeout=120)`
+
+Executes an arbitrary shell command via `bash -c` (or `direnv exec ... bash
+-c` — see "direnv / `.envrc`" below):
+
+```python
+cmd = [DIRENV_BIN, "exec", cwd, "bash", "-c", command] if DIRENV_BIN else ["bash", "-c", command]
+result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+```
+
+- `cwd` (default `"."`, resolved like every other `PATH_ARGS` entry) is the
+  working directory the command runs in.
+- `timeout` (default 120 seconds) kills the process and returns
+  `"Error: command timed out after <n>s"` if it hasn't finished in time.
+- `subprocess.run(...)` is wrapped in `try/except OSError` (same convention
+  as `rg_search`) — a launch failure returns `"Error: couldn't run bash:
+  ..."` instead of crashing the process.
+- Returns combined `stdout`+`stderr` (stripped, capped at 50 000 bytes —
+  same byte-cap style as `rg_search`), or `"(no output)"` if both are
+  empty. If the exit code is non-zero, it's prefixed as
+  `(exit code <n>)\n<output>` so the model can see the command failed
+  without having to parse the output for clues.
+
+This is **not a sandbox** — the tool itself places no restriction on what
+the command can do. The only gate is the pre-tool hook described in
+"Pre-tool hooks" above: a command whose working directory or a referenced
+path falls outside the current workspace, or that invokes `sudo`, prompts
+the user for approval first; an in-scope, non-`sudo` command runs
+immediately, same as any other tool. Not bound to the model in the Slack
+bot (`SLACK_TOOLS` excludes it) — the Slack bot always runs unattended, and
+`SlackLive.ask_menu()` always denies, so a Slack-bound `run_bash` could
+never actually run once it needed a prompt.
+
+#### direnv / `.envrc`
+
+`DIRENV_BIN = shutil.which("direnv")` is resolved once at import, exactly
+like `RG_BIN`. Whenever it's set, `run_bash` wraps the command:
+
+```python
+cmd = [DIRENV_BIN, "exec", cwd, "bash", "-c", command] if DIRENV_BIN else ["bash", "-c", command]
+```
+
+Three deliberate constraints, all mirroring direnv's own real behavior
+rather than reimplementing or overriding it:
+
+- **No auto-install.** If `direnv` isn't on `PATH`, `run_bash` uses plain
+  `bash -c` — that absence means the user isn't using this workflow at all.
+- **No bypassing `direnv allow`.** Whether an `.envrc` actually gets loaded
+  is entirely direnv's own decision.
+- **No custom `.envrc` discovery.** `direnv exec` already implements the
+  real directory-walk-up lookup and the allow/deny check — reimplementing
+  that here would risk quietly diverging from direnv's actual rules.
+
+**The blocked-`.envrc` fallback** — verified against real `direnv` (v2.37.1)
+rather than assumed: when an `.envrc` exists but hasn't been `direnv
+allow`-ed, `direnv exec` does **not** just skip loading it and run the
+command anyway — it refuses to run anything at all, exiting non-zero with
+`direnv: error <path>/.envrc is blocked. Run 'direnv allow' to approve its
+content` on stderr. Since the command must still run either way (the user's
+requirement is "don't load the env," not "don't run the command"),
+`run_bash` detects this specific message (`"is blocked"` and `"direnv
+allow"` both present in stderr, on a non-zero exit) and retries with a
+plain `["bash", "-c", command]` — deliberately without direnv, so the
+environment genuinely stays unloaded, matching what direnv itself refused
+to do:
+
+```python
+if DIRENV_BIN and result.returncode != 0 and "is blocked" in result.stderr and "direnv allow" in result.stderr:
+    result, error = _run_subprocess(["bash", "-c", command], cwd, timeout)
+```
+
+In the normal (allowed or no-`.envrc`) case, `direnv exec`'s own stderr
+(e.g. its "loading ~/.../.envrc" note) flows through the same combined
+stdout+stderr capture as any other command output, visible to the
+model/user like anything else `run_bash` runs.
+
 ## File editing tools
 
-Both of these are gated by the `permission_ask` pre-tool hook described
-above — the user must interactively approve every write or delete.
+`write_file`/`delete_file` are gated by the `permission_ask` pre-tool hook
+described above — the user must interactively approve every write or
+delete.
 
 ### `write_file(path, content)`
 

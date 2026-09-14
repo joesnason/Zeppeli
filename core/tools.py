@@ -49,6 +49,8 @@ def _find_rg_bin() -> str | None:
 
 RG_BIN = _find_rg_bin()  # resolved once at import; may be None — see rg_search()
 
+DIRENV_BIN = shutil.which("direnv")  # resolved once at import; None if not installed — see run_bash()
+
 
 @tool
 def list_files(path: str = ".") -> str:
@@ -250,6 +252,63 @@ def tail_file(path: str, lines: int = 100, max_bytes: int = 98304) -> str:
         return f"[tail_file] Error: {e}"
 
 
+def _run_subprocess(cmd: list[str], cwd: str, timeout: int):
+    """Shared subprocess.run() wrapper for run_bash — returns (result, None)
+    on success or (None, error_string) on TimeoutExpired/OSError, so run_bash
+    can retry with a different `cmd` (the direnv-blocked fallback) without
+    duplicating this handling."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout), None
+    except subprocess.TimeoutExpired:
+        return None, f"Error: command timed out after {timeout}s"
+    except OSError as e:
+        return None, f"Error: couldn't run bash: {e}"
+
+
+@tool
+def run_bash(command: str, cwd: str = ".", timeout: int = 120) -> str:
+    """Execute a shell command via `bash -c <command>` in the given working
+    directory (cwd, default "."). Returns combined stdout+stderr (capped at
+    50000 bytes) plus the exit code if non-zero. If the command doesn't finish
+    within timeout seconds (default 120), it is killed and an error is
+    returned. Commands whose working directory or referenced paths fall
+    outside the current workspace, or that use sudo, will prompt the user for
+    approval before running. If a `.envrc` applies to cwd, direnv is
+    installed, and the `.envrc` has been `direnv allow`-ed, the command runs
+    via `direnv exec` so it sees the same environment your shell would; if
+    it hasn't been allowed, the command still runs, just without that
+    environment (direnv itself refuses to run anything at all through an
+    unapproved `.envrc`, so this falls back to running the command directly
+    when that happens). This project never installs direnv or runs `direnv
+    allow` on your behalf."""
+    cmd = [DIRENV_BIN, "exec", cwd, "bash", "-c", command] if DIRENV_BIN else ["bash", "-c", command]
+    result, error = _run_subprocess(cmd, cwd, timeout)
+    if error:
+        return error
+
+    if DIRENV_BIN and result.returncode != 0 and "is blocked" in result.stderr and "direnv allow" in result.stderr:
+        # .envrc exists but hasn't been `direnv allow`-ed. direnv doesn't
+        # just skip loading it and run the command anyway — it refuses to
+        # run anything at all in this case — so mirror what the user's real
+        # shell would ultimately need (the command still executes) by
+        # falling back to a plain run, deliberately without the environment.
+        # This never bypasses direnv's own allow gate: the env stays unloaded.
+        result, error = _run_subprocess(["bash", "-c", command], cwd, timeout)
+        if error:
+            return error
+
+    output = (result.stdout + result.stderr).strip() or "(no output)"
+    max_bytes = 50000
+    output_bytes = output.encode()
+    if len(output_bytes) > max_bytes:
+        output = output_bytes[:max_bytes].decode(errors="ignore") + (
+            f"\n[Output truncated at {max_bytes} bytes]"
+        )
+    if result.returncode != 0:
+        output = f"(exit code {result.returncode})\n{output}"
+    return output
+
+
 @tool
 def write_file(path: str, content: str) -> str:
     """Write content to a file, creating it if it does not exist or replacing all existing content."""
@@ -277,8 +336,13 @@ def delete_file(path: str) -> str:
         return f"Error: {e}"
 
 
-TOOLS = [list_files, glob_files, rg_search, read_file, tail_file, write_file, delete_file]
+TOOLS = [list_files, glob_files, rg_search, read_file, tail_file, run_bash, write_file, delete_file]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
+
+# The Slack bot always runs unattended (MODE_AUTO, no human watching for a
+# permission menu — see slack_bot.py's docstring), so it binds this reduced
+# set instead of TOOLS, excluding run_bash entirely.
+SLACK_TOOLS = [t for t in TOOLS if t.name != "run_bash"]
 
 PATH_ARGS = {
     "list_files": ["path"],
@@ -286,6 +350,7 @@ PATH_ARGS = {
     "rg_search": ["path"],
     "read_file": ["path"],
     "tail_file": ["path"],
+    "run_bash": ["cwd"],
     "write_file": ["path"],
     "delete_file": ["path"],
 }

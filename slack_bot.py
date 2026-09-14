@@ -9,7 +9,10 @@ thread; each thread is its own independent conversation (see
 slack_bot/sessions.py). Tool calls run in MODE_AUTO, scoped to the
 config's "allowed_dir" — see slack_bot/live.py's ask_menu() and
 docs/slack.md's security-consideration section for what that does and
-doesn't protect against.
+doesn't protect against. The model is bound to core.tools.SLACK_TOOLS
+(TOOLS minus run_bash), not the full TOOLS list — the Slack bot always runs
+unattended, and run_bash's permission prompts have no one to answer them
+(SlackLive.ask_menu() always denies).
 """
 
 import asyncio
@@ -21,6 +24,7 @@ from slack_bolt.app.async_app import AsyncApp
 
 import cli
 from core.agent import get_context_window, load_llm
+from core.tools import SLACK_TOOLS
 from ui.permissions import MODE_AUTO
 from slack_bot.handlers import register_handlers
 from slack_bot.sessions import ThreadRegistry
@@ -47,7 +51,7 @@ async def _run() -> None:
     base_url = model_cfg.get("base_url")
     api_key = model_cfg.get("api_key")
 
-    llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key)
+    llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key, tools=SLACK_TOOLS)
     context_window = get_context_window(model) if not base_url else None
 
     app = AsyncApp(token=slack_cfg["bot_token"])

@@ -13,6 +13,7 @@ SYSTEM_PROMPT = """You are a helpful assistant with access to the following tool
 - rg_search(pattern, path, glob): Search file contents using ripgrep (regex supported). Use glob to filter by filename (e.g. "*.py"). Default path is ".".
 - read_file(path, offset, limit, max_lines, max_bytes): Read a file in chunks of up to 400 lines starting at line offset. Stops when max_lines (default 10000) or max_bytes (default 98304 = 96KB) is reached. Use offset from the returned hint to paginate through large files.
 - tail_file(path, lines, max_bytes): Read the last N lines (default 100) of a file, e.g. the end of a log. Bounded to max_bytes (default 98304 = 96KB) read from the end of the file — stays fast and memory-safe on huge files. Separate from read_file: use tail_file for the end/most-recent content, read_file to start from the beginning or paginate through a file.
+- run_bash(command, cwd, timeout): Execute a shell command via bash -c in cwd (default "."). Returns combined stdout+stderr (capped at 50000 bytes) and the exit code. Killed and reported as an error if it runs longer than timeout seconds (default 120). Loads a `.envrc` via direnv automatically when one applies, direnv is installed, and it's been allowed (`direnv allow`) — otherwise runs with the plain environment (the command still runs either way). A command whose working directory or referenced paths fall outside the current workspace, or that uses sudo, will prompt the user for approval before running — tell the user plainly if they decline. Not available in the Slack bot.
 - write_file(path, content): Write content to a file, creating it if it doesn't exist or replacing all its content.
 - delete_file(path): Delete a file. Does not delete directories.
 
@@ -24,23 +25,30 @@ Always base your response strictly on the actual tool result. If a tool result s
 The user may attach images to a message (screenshots, photos, diagrams). When an image is attached, answer from what you actually see in it. If a file path appears next to it in the text, that's only where the image came from — do NOT call read_file on it; read_file returns text and will produce garbage for a binary image file."""
 
 
-def load_llm(model: str | None = None, base_url: str | None = None, api_key: str | None = None):
-    """Load a chat model and bind it to the full tool set.
+def load_llm(model: str | None = None, base_url: str | None = None, api_key: str | None = None,
+             tools: list | None = None):
+    """Load a chat model and bind it to a tool set (TOOLS by default).
 
     Local Ollama is the default. If base_url is given, routes to a cloud/
     self-hosted model via litellm instead — model is required in that case
     (validated upstream in cli.py, not here). Flag/env-var resolution for
     all three params also happens upstream in cli.py; this stays a pure
-    function of its three params.
+    function of its params.
+
+    `tools` lets a caller bind a different set than the full TOOLS list —
+    e.g. slack_bot.py passes SLACK_TOOLS to exclude run_bash, since the
+    Slack bot always runs unattended with no one to answer its permission
+    prompts.
     """
+    tools = tools if tools is not None else TOOLS
     if base_url:
         from langchain_litellm import ChatLiteLLM  # lazy: keep litellm optional
 
         kwargs = {"model": model, "api_base": base_url}
         if api_key:
             kwargs["api_key"] = api_key
-        return ChatLiteLLM(**kwargs).bind_tools(TOOLS)
-    return ChatOllama(model=model or MODEL).bind_tools(TOOLS)
+        return ChatLiteLLM(**kwargs).bind_tools(tools)
+    return ChatOllama(model=model or MODEL).bind_tools(tools)
 
 
 def _ollama_show(model: str | None):

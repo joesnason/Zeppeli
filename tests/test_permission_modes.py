@@ -40,8 +40,11 @@ from ui.permissions import (
     MODE_APPROVAL,
     MODE_AUTO,
     MODE_YOLO,
+    _command_escapes_cwd,
+    _contains_sudo,
     _is_within_cwd,
     _make_auto_hook,
+    _make_bash_hook,
     build_pre_tool_hooks,
     confirm_auto_mode_trust,
 )
@@ -68,9 +71,11 @@ def test_build_pre_tool_hooks_approval_shape():
     # hooks() binds a fresh closure per call instead of returning
     # permission_ask itself — check shape/behavior, not identity.
     hooks = build_pre_tool_hooks(MODE_APPROVAL, "/any/cwd")
-    assert set(hooks.keys()) == {"write_file", "delete_file"}
+    assert set(hooks.keys()) == {"write_file", "delete_file", "run_bash"}
     assert callable(hooks["write_file"]) and callable(hooks["delete_file"])
     assert hooks["write_file"] is hooks["delete_file"]
+    # run_bash gets its own dedicated hook, not the shared write/delete one.
+    assert hooks["run_bash"] is not hooks["write_file"]
     assert hooks is not permissions.PRE_TOOL_HOOKS
 
 
@@ -86,9 +91,10 @@ def test_build_pre_tool_hooks_approval_delegates_to_permission_ask(monkeypatch):
 
 def test_build_pre_tool_hooks_auto_shape():
     hooks = build_pre_tool_hooks(MODE_AUTO, "/any/cwd")
-    assert set(hooks.keys()) == {"write_file", "delete_file"}
+    assert set(hooks.keys()) == {"write_file", "delete_file", "run_bash"}
     assert callable(hooks["write_file"]) and callable(hooks["delete_file"])
     assert hooks["write_file"] is hooks["delete_file"]
+    assert hooks["run_bash"] is not hooks["write_file"]
 
 
 def test_is_within_cwd_relative_inside(tmp_path):
@@ -138,6 +144,133 @@ def test_auto_hook_outside_cwd_delegates_false(tmp_path, monkeypatch):
     monkeypatch.setattr(permissions, "permission_ask", _fake)
     hook = _make_auto_hook(str(tmp_path), live=None)
     assert asyncio.run(hook("delete_file", {"path": "/etc/passwd"}, _console)) is False
+
+
+class _FakeLive:
+    """Stands in for ui/live_region.py's LiveRegion in tests — ask_menu()
+    returns a fixed index and records how many times it was called, so
+    tests can assert whether the menu was shown at all."""
+
+    def __init__(self, idx):
+        self.idx = idx
+        self.calls = 0
+
+    async def ask_menu(self, options, default_idx=0):
+        self.calls += 1
+        return self.idx
+
+
+# --- _contains_sudo() -------------------------------------------------------
+
+def test_contains_sudo_true_standalone_word():
+    assert _contains_sudo("sudo rm -rf /") is True
+
+
+def test_contains_sudo_false_no_sudo_at_all():
+    assert _contains_sudo("ls -la") is False
+
+
+def test_contains_sudo_false_as_substring_of_another_word():
+    assert _contains_sudo("echo mysudothing") is False
+
+
+# --- _command_escapes_cwd() --------------------------------------------------
+
+def test_command_escapes_cwd_relative_path_inside_is_none(tmp_path):
+    assert _command_escapes_cwd("cat foo.txt", str(tmp_path), str(tmp_path)) is None
+
+
+def test_command_escapes_cwd_absolute_path_outside_is_flagged(tmp_path):
+    result = _command_escapes_cwd("cat /etc/passwd", str(tmp_path), str(tmp_path))
+    assert result == "/etc/passwd"
+
+
+def test_command_escapes_cwd_dotdot_traversal_is_flagged(tmp_path):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    result = _command_escapes_cwd("cat ../../etc/passwd", str(sub), str(tmp_path))
+    assert result is not None and "passwd" in result
+
+
+def test_command_escapes_cwd_dev_null_redirect_is_not_flagged(tmp_path):
+    result = _command_escapes_cwd("cmd > /dev/null 2>&1", str(tmp_path), str(tmp_path))
+    assert result is None
+
+
+def test_command_escapes_cwd_unparsable_quoting_flags_for_safety(tmp_path):
+    result = _command_escapes_cwd('echo "unterminated', str(tmp_path), str(tmp_path))
+    assert result is not None and "unparsable" in result
+
+
+# --- _make_bash_hook() -------------------------------------------------------
+
+def test_bash_hook_in_scope_no_sudo_runs_without_prompt(tmp_path):
+    live = _FakeLive(idx=2)  # "No" — would deny if the menu were shown at all
+    hook = _make_bash_hook(str(tmp_path), live)
+    args = {"command": "ls -la", "cwd": str(tmp_path)}
+    assert asyncio.run(hook("run_bash", args, _console)) is True
+    assert live.calls == 0
+
+
+def test_bash_hook_cwd_outside_workspace_prompts(tmp_path):
+    live = _FakeLive(idx=0)  # "Yes"
+    hook = _make_bash_hook(str(tmp_path), live)
+    args = {"command": "ls -la", "cwd": "/etc"}
+    assert asyncio.run(hook("run_bash", args, _console)) is True
+    assert live.calls == 1
+
+
+def test_bash_hook_referenced_path_outside_workspace_prompts(tmp_path):
+    live = _FakeLive(idx=0)  # "Yes"
+    hook = _make_bash_hook(str(tmp_path), live)
+    args = {"command": "cat /etc/passwd", "cwd": str(tmp_path)}
+    assert asyncio.run(hook("run_bash", args, _console)) is True
+    assert live.calls == 1
+
+
+def test_bash_hook_sudo_prompts(tmp_path):
+    live = _FakeLive(idx=0)  # "Yes"
+    hook = _make_bash_hook(str(tmp_path), live)
+    args = {"command": "sudo apt update", "cwd": str(tmp_path)}
+    assert asyncio.run(hook("run_bash", args, _console)) is True
+    assert live.calls == 1
+
+
+def test_bash_hook_deny_returns_false(tmp_path):
+    live = _FakeLive(idx=2)  # "No"
+    hook = _make_bash_hook(str(tmp_path), live)
+    args = {"command": "sudo apt update", "cwd": str(tmp_path)}
+    assert asyncio.run(hook("run_bash", args, _console)) is False
+
+
+def test_bash_hook_session_approval_remembers_exact_command(tmp_path):
+    live = _FakeLive(idx=1)  # "Yes, always allow (this session)"
+    hook = _make_bash_hook(str(tmp_path), live)
+    args = {"command": "sudo apt update", "cwd": str(tmp_path)}
+    assert asyncio.run(hook("run_bash", args, _console)) is True
+    assert live.calls == 1
+    # Same exact command again — should be auto-approved without re-prompting.
+    assert asyncio.run(hook("run_bash", args, _console)) is True
+    assert live.calls == 1
+    # A different command still prompts.
+    other_args = {"command": "sudo apt upgrade", "cwd": str(tmp_path)}
+    assert asyncio.run(hook("run_bash", other_args, _console)) is True
+    assert live.calls == 2
+
+
+def test_bash_hook_via_build_pre_tool_hooks_same_in_approval_and_auto(tmp_path):
+    # run_bash's policy is mode-invariant — approval and auto mode must
+    # behave identically for it (unlike write_file/delete_file).
+    for mode in (MODE_APPROVAL, MODE_AUTO):
+        live = _FakeLive(idx=2)  # would deny if shown
+        hooks = build_pre_tool_hooks(mode, str(tmp_path), live)
+        args = {"command": "ls -la", "cwd": str(tmp_path)}
+        assert asyncio.run(hooks["run_bash"]("run_bash", args, _console)) is True
+        assert live.calls == 0
+
+
+def test_bash_hook_bypassed_entirely_in_yolo_mode(tmp_path):
+    assert build_pre_tool_hooks(MODE_YOLO, str(tmp_path)) == {}
 
 
 def test_cli_mutex_yolo_and_auto_raises_systemexit_2():
