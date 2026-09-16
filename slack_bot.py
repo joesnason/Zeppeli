@@ -13,9 +13,18 @@ doesn't protect against. The model is bound to core.tools.SLACK_TOOLS
 (TOOLS minus run_bash), not the full TOOLS list — the Slack bot always runs
 unattended, and run_bash's permission prompts have no one to answer them
 (SlackLive.ask_menu() always denies).
+
+Socket Mode reconnects are bounded: slack_bolt/slack_sdk retry a dropped
+connection forever with no give-up mechanism of their own (see
+slack_bot/reconnect.py's module docstring), so this process pairs a
+shortened `ping_interval` (RECONNECT_RETRY_INTERVAL, 5s) with an external
+supervisor that gives up — ending this process with a clear error — after
+RECONNECT_MAX_FAILURES (10) consecutive reconnect failures, reset back to
+0 on any genuine successful reconnect.
 """
 
 import asyncio
+import logging
 import sys
 
 import aiohttp
@@ -27,7 +36,11 @@ from core.agent import get_context_window, load_llm
 from core.tools import SLACK_TOOLS
 from ui.permissions import MODE_AUTO
 from slack_bot.handlers import register_handlers
+from slack_bot.reconnect import ReconnectFailureCounter, watch_for_reconnect
 from slack_bot.sessions import ThreadRegistry
+
+RECONNECT_RETRY_INTERVAL = 5   # seconds between Socket Mode reconnect attempts
+RECONNECT_MAX_FAILURES = 10    # consecutive failures before giving up
 
 
 def _load_and_validate_slack_config() -> dict:
@@ -75,8 +88,35 @@ async def _run() -> None:
         )
 
         print(f"Zeppeli Slack bot connected (bot user: {bot_user_id}, allowed_dir: {slack_cfg['allowed_dir']})")
-        handler = AsyncSocketModeHandler(app, slack_cfg["app_token"])
-        await handler.start_async()
+
+        give_up = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        counter = ReconnectFailureCounter(
+            max_failures=RECONNECT_MAX_FAILURES,
+            on_give_up=lambda: loop.call_soon_threadsafe(give_up.set),
+        )
+        socket_mode_logger = logging.getLogger("zeppeli.slack.socket_mode")
+        socket_mode_logger.addHandler(counter)
+
+        handler = AsyncSocketModeHandler(
+            app, slack_cfg["app_token"],
+            ping_interval=RECONNECT_RETRY_INTERVAL,
+            logger=socket_mode_logger,
+        )
+
+        async def _raise_on_give_up() -> None:
+            await give_up.wait()
+            await handler.client.close()
+            raise RuntimeError(
+                f"Lost connection to Slack and failed to reconnect after "
+                f"{RECONNECT_MAX_FAILURES} attempts ({RECONNECT_RETRY_INTERVAL}s apart) — giving up."
+            )
+
+        await asyncio.gather(
+            handler.start_async(),
+            _raise_on_give_up(),
+            watch_for_reconnect(handler.client, counter),
+        )
 
 
 if __name__ == "__main__":

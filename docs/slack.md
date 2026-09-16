@@ -207,6 +207,42 @@ No CLI flags — purely `config.json`-driven. Runs until interrupted
 (Ctrl+C). Prints a one-line "connected" message on successful startup,
 including the resolved bot user ID and `allowed_dir`.
 
+## Socket Mode reconnect behavior
+
+`slack_bolt`/`slack_sdk` retry a dropped Socket Mode connection forever on
+their own, with no backoff and no give-up mechanism of any kind (confirmed
+by reading the installed `slack_sdk`/`slack_bolt` source directly — there
+is no official `max_retries`/give-up parameter, and no `on_connect`
+callback to learn whether an attempt actually succeeded). `slack_bot.py`
+adds a small external supervisor on top, in `slack_bot/reconnect.py`:
+
+- **Retry interval**: `RECONNECT_RETRY_INTERVAL = 5` seconds — passed as
+  `AsyncSocketModeHandler`'s `ping_interval`, the only clean/documented
+  knob the library exposes (it doubles as the normal keepalive-ping
+  cadence, so this also makes the library's own staleness check —
+  `ping_interval × 4` — fire at 20s instead of the library's 10s-default-derived 40s).
+- **Give-up threshold**: `RECONNECT_MAX_FAILURES = 10` consecutive
+  reconnect failures. Counted by `ReconnectFailureCounter` (a
+  `logging.Handler` matching the two known slack_sdk failure-log
+  messages — this is the only failure signal the library exposes at all,
+  so it's inherently a little coupled to slack_sdk's current log wording)
+  and reset to 0 by `watch_for_reconnect()` whenever it observes a
+  genuinely new `SocketModeClient.current_session` — the library's own
+  internal "this attempt succeeded" signal (reassigned only after a real
+  successful connect), just never exposed as a callback. So the counter
+  only climbs on real failures and only resets on real successes — not a
+  blind lifetime count, and not a time-based guess.
+- **On give-up**: the Socket Mode client is closed and `slack_bot.py`'s
+  `_run()` raises, ending the whole process with a clear
+  `"Lost connection to Slack and failed to reconnect after 10 attempts
+  (5s apart) — giving up."` error and a non-zero exit code. There's no
+  automatic process-level restart — that's left to an external supervisor
+  (systemd, launchd, Docker's restart policy, or running it again by
+  hand) if you want one.
+- Worst-case time to give up is roughly the ~20s staleness-detection delay
+  plus 10 × 5s ≈ 70s, not a flat 50s, since the failure clock doesn't
+  start until the library itself notices the connection is stale.
+
 ## Known limitations (v1)
 
 - **Unbounded in-memory thread registry** — no eviction/TTL. A very
