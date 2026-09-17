@@ -11,9 +11,14 @@ on-disk core/sessions.py + core/eventlog.py records survive, same as the
 terminal REPL).
 
 Each thread's system message is core/agent.py's shared SYSTEM_PROMPT plus
-a Slack-only language instruction (_SLACK_LANGUAGE_INSTRUCTION below) —
-Slack replies are always in Traditional Chinese, regardless of the
-terminal REPL/-p mode's language-neutral default. See docs/slack.md.
+two Slack-only additions: a language instruction
+(_SLACK_LANGUAGE_INSTRUCTION below) — Slack replies are always in
+Traditional Chinese, regardless of the terminal REPL/-p mode's
+language-neutral default — and a formatting instruction
+(_SLACK_FORMATTING_INSTRUCTION below) telling the model to use Slack's own
+mrkdwn markup instead of CommonMark, since SlackLive posts the model's
+text to Slack unprocessed (no Markdown-to-mrkdwn conversion happens
+anywhere in this pipeline). See docs/slack.md.
 """
 
 import asyncio
@@ -34,6 +39,25 @@ _SLACK_LANGUAGE_INSTRUCTION = (
     "\n\nYou are being used through Slack. Always reply in Traditional "
     "Chinese (繁體中文), regardless of what language the user's message is "
     "written in."
+)
+
+# Slack doesn't render CommonMark — it has its own, more limited markup
+# ("mrkdwn") — and nothing in this pipeline (SlackLive.update_markdown()/
+# finalize_markdown(), slack_bot/live.py) converts the model's text before
+# posting it, so without this instruction CommonMark syntax like
+# **bold**/# headers/[text](url) shows up in Slack as literal, unrendered
+# punctuation.
+_SLACK_FORMATTING_INSTRUCTION = (
+    "\n\nFormat your replies using Slack's own markup (\"mrkdwn\"), not "
+    "standard Markdown — Slack does not render CommonMark. Use *bold* "
+    "(single asterisks, not **double**), _italic_ (underscores, not "
+    "asterisks), ~strikethrough~ (single tildes, not double), `inline "
+    "code`, and triple-backtick code blocks exactly as in Markdown. For "
+    "links, use Slack's <https://example.com|link text> format, never "
+    "Markdown's [text](url). Do not use '#'-style headers — they render "
+    "as literal text in Slack; use *bold* text for section titles "
+    "instead. Do not use Markdown tables — Slack does not render them; "
+    "use a simple bullet list or plain text instead."
 )
 
 
@@ -66,7 +90,7 @@ class ThreadRegistry:
             if session is None:
                 full_id = str(uuid.uuid4())
                 messages = [SystemMessage(
-                    content=SYSTEM_PROMPT + _SLACK_LANGUAGE_INSTRUCTION
+                    content=SYSTEM_PROMPT + _SLACK_LANGUAGE_INSTRUCTION + _SLACK_FORMATTING_INSTRUCTION
                     + f"\n\nWorking directory: {initial_cwd}"
                 )]
                 history_session = create_session(full_id, initial_cwd, model)

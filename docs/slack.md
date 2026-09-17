@@ -148,6 +148,29 @@ language-neutral. Not currently configurable per-workspace/thread; change
 `_SLACK_LANGUAGE_INSTRUCTION` directly if you need different wording or
 language.
 
+## Reply formatting
+
+Slack doesn't render CommonMark Markdown — it has its own, more limited
+markup ("mrkdwn"): `*bold*` instead of `**bold**`, `_italic_` instead of
+`*italic*`, `~strike~` instead of `~~strike~~`, `<url|label>` links
+instead of `[label](url)`, no `#`-style headers, no tables. Nothing in
+this pipeline converts the model's text before it reaches Slack —
+`slack_bot/live.py`'s `SlackLive.update_markdown()`/`finalize_markdown()`
+post it to `chat.postMessage`/`chat.update` completely unprocessed — so
+the bot is instructed, the same way as "Reply language" above, via a
+second Slack-only addition to the thread's `SystemMessage`:
+`slack_bot/sessions.py`'s `_SLACK_FORMATTING_INSTRUCTION`. The terminal
+REPL/`-p` mode is unaffected — it still renders the model's raw text as
+CommonMark through Rich's `Markdown` class (`ui/live_region.py`), a
+completely separate code path.
+
+This is prompt-based, not a hard guarantee: there's no code-level
+Markdown-to-mrkdwn converter anywhere in the pipeline, so compliance
+depends on the model actually following the instruction. If it turns out
+not to comply reliably enough in practice, the next step would be adding
+an actual conversion pass in `SlackLive` before posting — not yet built.
+Change `_SLACK_FORMATTING_INSTRUCTION` directly for different wording.
+
 ## File attachments
 
 Attaching a file to a message (e.g. a log file) lets the bot analyze it

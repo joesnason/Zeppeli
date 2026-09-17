@@ -17,7 +17,12 @@ from slack_bot.access import is_allowed
 from slack_bot.attachments import AttachmentError, _is_supported, _sanitize_filename, process_attachment
 from slack_bot.handlers import _strip_bot_mention, register_handlers
 from slack_bot.live import SlackLive
-from slack_bot.sessions import ThreadSession, ThreadRegistry, _SLACK_LANGUAGE_INSTRUCTION
+from slack_bot.sessions import (
+    ThreadSession,
+    ThreadRegistry,
+    _SLACK_FORMATTING_INSTRUCTION,
+    _SLACK_LANGUAGE_INSTRUCTION,
+)
 
 
 def _run(coro):
@@ -203,6 +208,31 @@ def test_thread_registry_system_message_includes_traditional_chinese_instruction
         assert "Working directory: /tmp" in system_message.content
         # The shared constant itself must never be mutated in place.
         assert "繁體中文" not in SYSTEM_PROMPT
+
+    _run(body())
+
+
+def test_thread_registry_system_message_includes_slack_formatting_instruction(tmp_zeppeli_dirs):
+    # Slack doesn't render CommonMark — SlackLive posts the model's text
+    # unprocessed — so the thread's SystemMessage must also carry a
+    # Slack-only mrkdwn-formatting instruction, coexisting with the
+    # Traditional-Chinese one, without mutating the shared SYSTEM_PROMPT.
+    registry = ThreadRegistry()
+
+    async def body():
+        session = await registry.get_or_create("T1", "/tmp", "gemma4:e2b")
+        system_message = session.messages[0]
+        assert isinstance(system_message, SystemMessage)
+        assert _SLACK_FORMATTING_INSTRUCTION in system_message.content
+        assert "mrkdwn" in system_message.content
+        assert "*bold*" in system_message.content
+        assert "<https://example.com|link text>" in system_message.content
+        # Both Slack-only additions coexist alongside the shared prompt.
+        assert _SLACK_LANGUAGE_INSTRUCTION in system_message.content
+        assert SYSTEM_PROMPT in system_message.content
+        assert "Working directory: /tmp" in system_message.content
+        # The shared constant itself must never be mutated in place.
+        assert "mrkdwn" not in SYSTEM_PROMPT
 
     _run(body())
 
