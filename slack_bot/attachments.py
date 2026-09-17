@@ -21,7 +21,11 @@ PREVIEW_LINES = 200                     # tail lines shown in the initial note
 PREVIEW_MAX_CHARS = 8000                # bounds the preview even if lines are very long
 MAX_ATTACHMENTS_PER_MESSAGE = 3
 
-ATTACHMENTS_SUBDIR = ".slack_attachments"
+ATTACHMENTS_SUBDIR = "slack_attachments"  # no leading dot — a hidden directory would be
+# silently invisible to rg_search (ripgrep skips hidden dirs by default, no --hidden
+# flag is passed) and glob_files (Node's fs.promises.glob() also excludes a
+# dot-prefixed directory segment from a generic pattern), so the model couldn't
+# discover an attachment via search/glob, only by using the exact path it was handed
 
 _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 

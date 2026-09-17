@@ -184,13 +184,18 @@ wrongly reject. Images, archives, and other binaries are refused with a
 one-line note in the thread, not silently dropped.
 
 Rather than dumping the whole file into the prompt, the bot **saves it**
-to `<allowed_dir>/.slack_attachments/` (named `<slack-file-id>_<filename>`
+to `<allowed_dir>/slack_attachments/` (named `<slack-file-id>_<filename>`
 to avoid collisions) and gives the model the file's path, its total line
 count, and a preview of its **last ~200 lines** — a log's most recent
-lines are usually the relevant ones. If the model needs earlier content,
-it uses its own existing `read_file`/`rg_search` tools on that saved
-path to page through the rest — no special "attachment" tool exists;
-this is exactly the same file-reading path any other file on disk goes
+lines are usually the relevant ones. Deliberately not a dot-prefixed
+(hidden) directory: `rg_search`/`glob_files` skip hidden files/directories
+by default (ripgrep's own default, and Node's `fs.promises.glob()`), which
+would make a saved attachment silently undiscoverable by search/glob even
+though it's right there in the workspace. If the model needs earlier
+content, it uses its own existing `read_file`/`rg_search` tools on that
+saved path to page through the rest — no special "attachment" tool
+exists; this is exactly the same file-reading path any other file on disk
+goes
 through.
 
 A message can carry up to 3 attachments; anything beyond that is
@@ -275,9 +280,12 @@ adds a small external supervisor on top, in `slack_bot/reconnect.py`:
 - **No image support** — only `text/*` attachments are handled (see
   "File attachments" above); Slack image uploads aren't wired into
   `core/images.py`'s `@path`/`--image` vision pipeline.
-- **`.slack_attachments/` never gets cleaned up** — every downloaded
+- **`slack_attachments/` never gets cleaned up** — every downloaded
   attachment accumulates on disk indefinitely, same "no eviction in v1"
   spirit as the thread registry above. Periodically clear it out by hand
-  if disk usage becomes a concern.
+  if disk usage becomes a concern. (Renamed from the hidden
+  `.slack_attachments/` — see "File attachments" above; any files a
+  pre-upgrade process already saved under the old hidden path are left in
+  place, not migrated.)
 - **No interactive approval** — by design (see "Permission model"
   above), not a bug.
