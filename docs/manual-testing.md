@@ -1,5 +1,7 @@
 # Testing: permission modes
 
+English | [繁體中文](manual-testing.zh-TW.md)
+
 Two layers of test coverage for the permission-mode system (approval/auto/
 yolo): an automated script with no Ollama dependency, and a manual checklist
 against the live model. Run the automated script first — it's instant and
@@ -217,7 +219,7 @@ suffix — there's no equivalent lookup for a non-Ollama backend.
 ```bash
 python3 cli.py --base-url http://<vllm-host>:8000/v1 \
   --model hosted_vllm/qwen3.6-27b-awq-int4 \
-  -p "這張圖裡有什麼？" --image ./shot.png
+  -p "What is in this image?" --image ./shot.png
 ```
 
 Expect: a response that actually describes the image's content (not a
@@ -228,7 +230,7 @@ generic "I can't see images" answer). See
 
 ```bash
 python3 cli.py --base-url <url> --model hosted_vllm/qwen3.6-27b-awq-int4
-> 這張圖有什麼問題 @shots/error.png
+> What's wrong in this image? @shots/error.png
 ```
 
 Expect: an `[image: shots/error.png]` line echoed under your orange input
@@ -242,12 +244,12 @@ treated as an attachment — no `[image: ...]` line, text unchanged.
 
 ```bash
 > /image shots/other.png
-> 那這張呢
+> What about this one?
 ```
 
 Expect: `/image shots/other.png` prints a dim `Staged: shots/other.png (1
 image)` note and does **not** count as a turn (no model call). The next
-message (`那這張呢`) shows the `[image: ...]` echo and includes the image.
+message (`What about this one?`) shows the `[image: ...]` echo and includes the image.
 The message *after that* has no image attached — staging is consumed, not
 sticky. Also try `/image` alone (lists currently staged, or shows usage)
 and `/image clear`.

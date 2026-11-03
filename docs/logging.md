@@ -1,5 +1,7 @@
 # Event log
 
+English | [繁體中文](logging.zh-TW.md)
+
 Every run of this CLI — interactive REPL or one-shot `-p` — also writes a
 second, more granular record: an append-only JSONL event stream under
 `~/.zeppeli/logs/`, always on, no flag required. This is a parallel

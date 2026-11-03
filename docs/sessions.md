@@ -1,5 +1,7 @@
 # Session history persistence
 
+English | [繁體中文](sessions.zh-TW.md)
+
 Every run of this CLI — interactive REPL or one-shot `-p` — is recorded to a
 JSON file under `~/.zeppeli/sessions/`, always on, no flag required. This
 doc covers the storage format, the lifecycle that writes it, and the

@@ -1,5 +1,7 @@
 # Slack bot integration
 
+English | [繁體中文](slack.zh-TW.md)
+
 `slack_bot.py` (repo root) is a second, independent entry point alongside
 `cli.py` — a long-running Socket Mode process that lets people trigger
 the same AI agent (same tools, same `core/` model logic) from Slack

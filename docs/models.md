@@ -1,5 +1,7 @@
 # Models: local Ollama vs. cloud via litellm
 
+English | [繁體中文](models.zh-TW.md)
+
 `core/agent.py`'s `load_llm(model, base_url, api_key)` is the single place
 that decides which backend to build:
 
@@ -420,5 +422,5 @@ it:
 ```bash
 python3 cli.py --base-url http://<vllm-host>:8000/v1 \
   --model hosted_vllm/qwen3.6-27b-awq-int4 \
-  -p "這張圖裡有什麼？" --image ./shot.png
+  -p "What is in this image?" --image ./shot.png
 ```

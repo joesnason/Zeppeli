@@ -1,5 +1,7 @@
 # Zeppeli
 
+English | [繁體中文](README.zh-TW.md)
+
 Interactive terminal chat interface powered by a local [Ollama](https://ollama.com) model with tool-calling support.
 
 ## Features
@@ -96,33 +98,33 @@ typing at the input prompt to clear the line back to empty.
 ```
 Ollama Chat (gemma4:26b-nvfp4)  — type 'quit' or Ctrl+C to exit
 
-You> 現在目錄下有哪些檔案？
+You> What files are in the current directory?
   [tool: list_files({'path': '.'})]
-Zeppeli> 目前目錄下有以下檔案：...
+Zeppeli> The current directory contains the following files: ...
 
-You> 找出所有 Python 檔案
+You> Find all Python files
   [tool: glob_files({'pattern': '**/*.py'})]
-Zeppeli> 找到以下 Python 檔案：...
+Zeppeli> Found the following Python files: ...
 
-You> 搜尋所有含有 @tool 的地方
+You> Search for every place that contains @tool
   [tool: rg_search({'pattern': '@tool', 'glob': '*.py'})]
-Zeppeli> 在以下位置找到 @tool：...
+Zeppeli> Found @tool in the following locations: ...
 
-You> 讀取 cli.py 的前 20 行
+You> Read the first 20 lines of cli.py
   [tool: read_file({'path': 'cli.py', 'limit': 20})]
-Zeppeli> 以下是 cli.py 的前 20 行：...
+Zeppeli> Here are the first 20 lines of cli.py: ...
 
-You> 這張圖有什麼問題 @shots/error.png
+You> What's wrong in this image? @shots/error.png
   [image: shots/error.png]
-Zeppeli> 這是一個 Python TypeError...
+Zeppeli> This is a Python TypeError...
 
-You> 建立一個 hello.txt，內容是 "Hello, world!"
+You> Create hello.txt with the content "Hello, world!"
   [tool: write_file({'path': 'hello.txt', 'content': 'Hello, world!'})]
-Zeppeli> 已建立 hello.txt，寫入 13 bytes。
+Zeppeli> Created hello.txt (13 bytes written).
 
-You> 刪除 hello.txt
+You> Delete hello.txt
   [tool: delete_file({'path': 'hello.txt'})]
-Zeppeli> 已刪除 hello.txt。
+Zeppeli> Deleted hello.txt.
 
 You> /exit
 Bye!
@@ -196,7 +198,7 @@ the event schema and lifecycle.
 | `tests/test_slack_bot.py` | Automated tests for Slack access control, throttled live-updates, and thread-session locking — no live Slack/network needed |
 | `bin/rg-darwin-arm64` | Bundled ripgrep binary, macOS Apple Silicon |
 | `bin/rg-linux-x86_64` | Bundled ripgrep binary, Linux x86-64 |
-| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), [`docs/logging.md`](docs/logging.md), and [`docs/slack.md`](docs/slack.md) |
+| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), [`docs/logging.md`](docs/logging.md), and [`docs/slack.md`](docs/slack.md). Each doc is in English by default; the Traditional Chinese version ends in `.zh-TW.md` |
 
 ## Exit
 

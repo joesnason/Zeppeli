@@ -1,5 +1,7 @@
 # Tools
 
+English | [繁體中文](tools.zh-TW.md)
+
 Zeppeli exposes a fixed set of LangChain `@tool`-decorated functions to the model
 via `llm.bind_tools([...])`, wired up in `core/agent.py`'s `load_llm()`. This
 document describes each tool's signature, behavior, and implementation
@@ -609,4 +611,4 @@ p.unlink()
    same `(tool_name, args, console) -> bool` signature). It then
    automatically participates in all three permission modes (approval/
    yolo/auto) via `build_pre_tool_hooks()` — no extra per-mode wiring needed.
-6. Document it here in `docs/tools.md`.
+6. Document it here in `docs/tools.md` (and mirror the change in `docs/tools.zh-TW.md`).
