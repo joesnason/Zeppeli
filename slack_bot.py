@@ -33,6 +33,7 @@ from slack_bolt.app.async_app import AsyncApp
 
 import cli
 from core.agent import get_context_window, load_llm
+from core.skills import load_skills
 from core.tools import SLACK_TOOLS
 from ui.permissions import MODE_AUTO
 from slack_bot.handlers import register_handlers
@@ -66,6 +67,9 @@ async def _run() -> None:
 
     llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key, tools=SLACK_TOOLS)
     context_window = get_context_window(model) if not base_url else None
+    # Scanned once at startup; every thread's SystemMessage lists the same
+    # skills (project level = <allowed_dir>/.zeppeli/skills).
+    load_skills(slack_cfg["allowed_dir"])
 
     app = AsyncApp(token=slack_cfg["bot_token"])
     auth = await app.client.auth_test()

@@ -417,6 +417,14 @@ the call's own `offset`, so every follow-up call at that same offset
 repeated the identical `max_bytes` stop forever with no way to read
 past it (fixed after a real build-log analysis hit exactly this).
 
+`path` may also be a `skill://<name>` / `skill://<name>/<relative path>`
+URI: `resolve_paths()` leaves such values untouched, and `read_file()`
+maps them to the real file inside that skill's folder (via
+`core/skills.py`'s `resolve_skill_uri()`) before the normal paginated
+read. The header then reads `[File: skill://<name> | skill dir: <abs dir> |
+lines ...]`. Only `read_file` supports `skill://` — see
+[`docs/skills.md`](skills.md).
+
 Errors: `FileNotFoundError` and an `offset` past end-of-file both return a
 `[read_file] Error: ...` string rather than raising, since tool results must
 be strings the model can read.

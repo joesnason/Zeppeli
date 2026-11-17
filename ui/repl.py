@@ -67,6 +67,7 @@ from core.sessions import (
     save_session,
     start_run,
 )
+from core.skills import build_skills_prompt, load_skills
 from core.images import MAX_SOURCE_BYTES, is_image_path, parse_image_mentions, resolve_image_path
 from .completion import AtPathCompleter
 from .live_region import LiveRegion, SimpleLive
@@ -469,7 +470,10 @@ def main(mode: str = MODE_APPROVAL, prompt: str | None = None,
 
     try:
         llm_with_tools = load_llm(model=model, base_url=base_url, api_key=api_key)
-        messages = [SystemMessage(content=SYSTEM_PROMPT + f"\n\nWorking directory: {initial_cwd}")]
+        # Skills are scanned once per session — see core/skills.py / docs/skills.md.
+        skills_prompt = build_skills_prompt(load_skills(initial_cwd))
+        messages = [SystemMessage(content=SYSTEM_PROMPT + skills_prompt
+                                  + f"\n\nWorking directory: {initial_cwd}")]
 
         # Created once per process and written immediately (0 runs, 0
         # history) so even a session that never completes a turn still

@@ -363,6 +363,13 @@ docstring。
 會永遠重複相同的 `max_bytes` 停止，無法讀過去（在一次真實的建置日誌分析
 正好遇到這點後修正）。
 
+`path` 也可以是 `skill://<name>`／`skill://<name>/<相對路徑>` URI：
+`resolve_paths()` 不會處理這類值，`read_file()` 會在一般的分頁讀取之前，
+（透過 `core/skills.py` 的 `resolve_skill_uri()`）把它們對應到該 skill
+資料夾中的真實檔案。此時標頭為 `[File: skill://<name> | skill dir: <abs
+dir> | lines ...]`。只有 `read_file` 支援 `skill://` — 見
+[`docs/skills.zh-TW.md`](skills.zh-TW.md)。
+
 錯誤：`FileNotFoundError` 與超過檔案結尾的 `offset` 都會回傳
 `[read_file] Error: ...` 字串，而非拋出例外，因為工具結果必須是模型可讀的
 字串。

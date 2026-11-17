@@ -27,6 +27,16 @@ from .images import (
     load_image_block,
     build_message_content,
 )
+from .skills import (
+    USER_SKILLS_DIR,
+    Skill,
+    SkillError,
+    discover_skills,
+    load_skills,
+    get_active_skills,
+    build_skills_prompt,
+    resolve_skill_uri,
+)
 from .messages import extract_text, tool_result_ok, truncate_tool_output, compact_messages
 from .eventlog import (
     LOGS_DIR,
@@ -86,6 +96,14 @@ __all__ = [
     "parse_image_mentions",
     "load_image_block",
     "build_message_content",
+    "USER_SKILLS_DIR",
+    "Skill",
+    "SkillError",
+    "discover_skills",
+    "load_skills",
+    "get_active_skills",
+    "build_skills_prompt",
+    "resolve_skill_uri",
     "extract_text",
     "tool_result_ok",
     "truncate_tool_output",

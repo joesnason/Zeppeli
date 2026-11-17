@@ -10,6 +10,7 @@ Interactive terminal chat interface powered by a local [Ollama](https://ollama.c
 - Streaming output — responses print token by token
 - Tool calling — AI can search/inspect files and edit (write/delete) files when relevant
 - Image input — attach a local image via `@path`, `/image <path>`, or `--image` for vision-capable models (see [`docs/models.md`](docs/models.md#vision--image-input))
+- Skills — drop task-specific instructions into `~/.zeppeli/skills/<name>/SKILL.md` or `./.zeppeli/skills/<name>/SKILL.md`; the model reads them on demand via `skill://<name>` (see [`docs/skills.md`](docs/skills.md))
 - Slash commands: `/exit` to quit, `/image <path>` to attach an image
 
 ## Requirements
@@ -157,6 +158,16 @@ and shell commands outside the current workspace (or using `sudo`)
 requiring interactive confirmation. See [`docs/tools.md`](docs/tools.md)
 for the full list and implementation details.
 
+## Skills
+
+At session start, every `SKILL.md` under `~/.zeppeli/skills/<name>/` and
+`./.zeppeli/skills/<name>/` (project level wins on a name clash) is
+scanned, and each skill's name and description is listed in the system
+prompt. When a request matches, the model reads the full instructions with
+`read_file("skill://<name>")`, and supporting files with
+`skill://<name>/<path>`. Set `disable-model-invocation: true` in a skill's
+frontmatter to hide it. See [`docs/skills.md`](docs/skills.md).
+
 ## Session History
 
 Every run — interactive REPL or one-shot `-p` — is automatically recorded
@@ -178,6 +189,7 @@ the event schema and lifecycle.
 |------|---------|
 | `cli.py` | Interactive CLI entry point |
 | `core/` | AI agent/model layer — tool definitions, path resolution, Ollama loading |
+| `core/skills.py` | Skill discovery (`SKILL.md` frontmatter) and `skill://` resolution — see [`docs/skills.md`](docs/skills.md) |
 | `ui/` | User interaction layer — REPL loop, streaming/Markdown rendering, permission prompts |
 | `tests/test_tool_call.py` | Batch test script for tool calling |
 | `tests/test_permission_modes.py` | Automated tests for permission-mode logic — no Ollama needed |
@@ -190,6 +202,7 @@ the event schema and lifecycle.
 | `tests/test_compaction.py` | Automated tests for the two-tier conversation-history compaction sent to the model — no Ollama/network needed |
 | `tests/test_images.py` | Automated tests for image attachment (`@path`/`/image`/`--image`) — no Ollama/network needed |
 | `tests/test_sessions.py` | Automated tests for session-history persistence (`core/sessions.py`) — no Ollama/network needed |
+| `tests/test_skills.py` | Automated tests for skill discovery, the system-prompt section, and `skill://` reads — no Ollama/network needed |
 | `tests/test_eventlog.py` | Automated tests for the JSONL event log (`core/eventlog.py`) — no Ollama/network needed |
 | `requirements.txt` | Python dependencies (`pip3 install -r requirements.txt`) |
 | `config.json.example` | Template for the optional git-ignored `config.json` (local `model`/`base_url`/`api_key` overrides, plus the optional `slack` block) — see [`docs/models.md`](docs/models.md) and [`docs/slack.md`](docs/slack.md) |
@@ -198,7 +211,7 @@ the event schema and lifecycle.
 | `tests/test_slack_bot.py` | Automated tests for Slack access control, throttled live-updates, and thread-session locking — no live Slack/network needed |
 | `bin/rg-darwin-arm64` | Bundled ripgrep binary, macOS Apple Silicon |
 | `bin/rg-linux-x86_64` | Bundled ripgrep binary, Linux x86-64 |
-| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), [`docs/logging.md`](docs/logging.md), and [`docs/slack.md`](docs/slack.md). Each doc is in English by default; the Traditional Chinese version ends in `.zh-TW.md` |
+| `docs/` | Implementation details (tool internals, etc.) — see also [`docs/manual-testing.md`](docs/manual-testing.md), [`docs/models.md`](docs/models.md), [`docs/sessions.md`](docs/sessions.md), [`docs/logging.md`](docs/logging.md), [`docs/skills.md`](docs/skills.md), and [`docs/slack.md`](docs/slack.md). Each doc is in English by default; the Traditional Chinese version ends in `.zh-TW.md` |
 
 ## Exit
 

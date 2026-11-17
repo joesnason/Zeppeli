@@ -10,6 +10,7 @@
 - 串流輸出 — 回應逐 token 印出
 - 工具呼叫 — AI 可在需要時搜尋／檢視檔案，以及編輯（寫入／刪除）檔案
 - 圖片輸入 — 對支援視覺的模型，可透過 `@path`、`/image <path>` 或 `--image` 附加本機圖片（見 [`docs/models.zh-TW.md`](docs/models.zh-TW.md#vision--image-input)）
+- Skills — 把特定任務的說明放在 `~/.zeppeli/skills/<name>/SKILL.md` 或 `./.zeppeli/skills/<name>/SKILL.md`；模型會在需要時透過 `skill://<name>` 讀取（見 [`docs/skills.zh-TW.md`](docs/skills.zh-TW.md)）
 - 斜線指令：`/exit` 離開、`/image <path>` 附加圖片
 
 ## 需求
@@ -148,6 +149,16 @@ shell 指令；破壞性操作，以及在目前工作區之外（或使用 `sud
 指令，都需要互動確認。完整清單與實作細節見
 [`docs/tools.zh-TW.md`](docs/tools.zh-TW.md)。
 
+## Skills
+
+session 開始時，會掃描 `~/.zeppeli/skills/<name>/` 與
+`./.zeppeli/skills/<name>/` 下的每個 `SKILL.md`（名稱衝突時專案層優先），
+並把每個 skill 的名稱與說明列在 system prompt 中。當請求符合時，模型會用
+`read_file("skill://<name>")` 讀取完整說明，並用 `skill://<name>/<path>`
+讀取附屬檔案。在 skill 的 frontmatter 中設定
+`disable-model-invocation: true` 可隱藏它。見
+[`docs/skills.zh-TW.md`](docs/skills.zh-TW.md)。
+
 ## 對話紀錄（Session History）
 
 每次執行 — 互動 REPL 或單次 `-p` — 都會自動記錄到
@@ -168,6 +179,7 @@ schema 與生命週期見 [`docs/logging.zh-TW.md`](docs/logging.zh-TW.md)。
 |------|---------|
 | `cli.py` | 互動式 CLI 進入點 |
 | `core/` | AI agent／模型層 — 工具定義、路徑解析、Ollama 載入 |
+| `core/skills.py` | skill 掃描（`SKILL.md` frontmatter）與 `skill://` 解析 — 見 [`docs/skills.zh-TW.md`](docs/skills.zh-TW.md) |
 | `ui/` | 使用者互動層 — REPL 迴圈、串流／Markdown 渲染、權限提示 |
 | `tests/test_tool_call.py` | 工具呼叫的批次測試腳本 |
 | `tests/test_permission_modes.py` | 權限模式邏輯的自動化測試 — 不需 Ollama |
@@ -180,6 +192,7 @@ schema 與生命週期見 [`docs/logging.zh-TW.md`](docs/logging.zh-TW.md)。
 | `tests/test_compaction.py` | 送給模型的兩層對話歷史壓縮（compaction）的自動化測試 — 不需 Ollama／網路 |
 | `tests/test_images.py` | 圖片附加（`@path`／`/image`／`--image`）的自動化測試 — 不需 Ollama／網路 |
 | `tests/test_sessions.py` | 對話紀錄持久化（`core/sessions.py`）的自動化測試 — 不需 Ollama／網路 |
+| `tests/test_skills.py` | skill 掃描、system prompt 區段與 `skill://` 讀取的自動化測試 — 不需 Ollama／網路 |
 | `tests/test_eventlog.py` | JSONL 事件日誌（`core/eventlog.py`）的自動化測試 — 不需 Ollama／網路 |
 | `requirements.txt` | Python 相依套件（`pip3 install -r requirements.txt`） |
 | `config.json.example` | 選用、已被 git 忽略的 `config.json` 範本（本機 `model`／`base_url`／`api_key` 覆寫，以及選用的 `slack` 區塊）— 見 [`docs/models.zh-TW.md`](docs/models.zh-TW.md) 與 [`docs/slack.zh-TW.md`](docs/slack.zh-TW.md) |
@@ -188,7 +201,7 @@ schema 與生命週期見 [`docs/logging.zh-TW.md`](docs/logging.zh-TW.md)。
 | `tests/test_slack_bot.py` | Slack 存取控制、節流的即時更新、討論串 session 鎖定的自動化測試 — 不需實際 Slack／網路 |
 | `bin/rg-darwin-arm64` | 內建 ripgrep 執行檔，macOS Apple Silicon |
 | `bin/rg-linux-x86_64` | 內建 ripgrep 執行檔，Linux x86-64 |
-| `docs/` | 實作細節（工具內部機制等）— 另見 [`docs/manual-testing.zh-TW.md`](docs/manual-testing.zh-TW.md)、[`docs/models.zh-TW.md`](docs/models.zh-TW.md)、[`docs/sessions.zh-TW.md`](docs/sessions.zh-TW.md)、[`docs/logging.zh-TW.md`](docs/logging.zh-TW.md) 與 [`docs/slack.zh-TW.md`](docs/slack.zh-TW.md)。每份文件的英文版為預設，繁體中文版以 `.zh-TW.md` 結尾 |
+| `docs/` | 實作細節（工具內部機制等）— 另見 [`docs/manual-testing.zh-TW.md`](docs/manual-testing.zh-TW.md)、[`docs/models.zh-TW.md`](docs/models.zh-TW.md)、[`docs/sessions.zh-TW.md`](docs/sessions.zh-TW.md)、[`docs/logging.zh-TW.md`](docs/logging.zh-TW.md)、[`docs/skills.zh-TW.md`](docs/skills.zh-TW.md) 與 [`docs/slack.zh-TW.md`](docs/slack.zh-TW.md)。每份文件的英文版為預設，繁體中文版以 `.zh-TW.md` 結尾 |
 
 ## 離開
 

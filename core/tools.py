@@ -11,6 +11,8 @@ import shutil
 import subprocess
 from langchain_core.tools import tool
 
+from .skills import SkillError, is_skill_uri, resolve_skill_uri
+
 # core/tools.py lives one directory below the repo root, so climb one level
 # to find bin/ regardless of the caller's cwd.
 _BIN_DIR = pathlib.Path(__file__).parent.parent / "bin"
@@ -121,8 +123,17 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
     The returned footer tells you whether more content is available and the next offset to use.
     A single line longer than max_bytes is truncated and still counted as
     read (rather than returning nothing) so a later call always advances
-    past it instead of repeating the same stop forever."""
+    past it instead of repeating the same stop forever.
+    `path` may also be `skill://<name>` (that skill's SKILL.md) or
+    `skill://<name>/<relative path>` (a file inside the skill's folder)."""
     limit = min(limit, 400)
+    display_path, skill_note = path, ""
+    if is_skill_uri(path):
+        try:
+            target, skill = resolve_skill_uri(path)
+        except SkillError as e:
+            return f"[read_file] Error: {e}"
+        path, skill_note = str(target), f" | skill dir: {skill.directory}"
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for i in range(offset):
@@ -163,7 +174,7 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
             has_more = bool(f.readline())
 
         end_line = offset + len(lines)
-        header = f"[File: {path} | lines {offset + 1}–{end_line} | {total_bytes} bytes]"
+        header = f"[File: {display_path}{skill_note} | lines {offset + 1}–{end_line} | {total_bytes} bytes]"
         if truncated_by:
             # As explicit as the "more available" footer below — a stop
             # due to a hard limit still has more to read (the file isn't
@@ -177,7 +188,7 @@ def read_file(path: str, offset: int = 0, limit: int = 400,
         return header + "\n" + "".join(lines) + footer
 
     except FileNotFoundError:
-        return f"[read_file] Error: file not found: {path}"
+        return f"[read_file] Error: file not found: {display_path}"
     except Exception as e:
         return f"[read_file] Error: {e}"
 
@@ -359,7 +370,9 @@ PATH_ARGS = {
 def resolve_paths(tool_name: str, args: dict, cwd: str) -> dict:
     args = dict(args)
     for key in PATH_ARGS.get(tool_name, []):
-        if key in args:
+        # skill:// URIs are resolved by read_file() itself (core/skills.py);
+        # pathlib would otherwise collapse them into <cwd>/skill:/<name>.
+        if key in args and not is_skill_uri(args[key]):
             p = pathlib.Path(args[key]).expanduser()
             if not p.is_absolute():
                 p = pathlib.Path(cwd) / p

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from langchain_core.messages import SystemMessage
 
 from core.agent import SYSTEM_PROMPT
+from core.skills import build_skills_prompt, get_active_skills
 from core.sessions import StoredSession, create_session, save_session
 
 # Slack-only addition to the shared SYSTEM_PROMPT — appended here rather
@@ -90,7 +91,8 @@ class ThreadRegistry:
             if session is None:
                 full_id = str(uuid.uuid4())
                 messages = [SystemMessage(
-                    content=SYSTEM_PROMPT + _SLACK_LANGUAGE_INSTRUCTION + _SLACK_FORMATTING_INSTRUCTION
+                    content=SYSTEM_PROMPT + build_skills_prompt(get_active_skills())
+                    + _SLACK_LANGUAGE_INSTRUCTION + _SLACK_FORMATTING_INSTRUCTION
                     + f"\n\nWorking directory: {initial_cwd}"
                 )]
                 history_session = create_session(full_id, initial_cwd, model)
