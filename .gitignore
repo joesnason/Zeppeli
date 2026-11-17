@@ -42,3 +42,6 @@ logs/
 .idea/
 *.swp
 *.swo
+
+# Zeppeli project-level skills/data (local only)
+.zeppeli/
